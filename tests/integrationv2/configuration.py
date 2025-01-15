@@ -1,8 +1,10 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 import collections
 
 from common import Certificates, Ciphers, Curves, Protocols, AvailablePorts
 from constants import TEST_SNI_CERT_DIRECTORY
-from providers import S2N, OpenSSL, BoringSSL, JavaSSL
+from providers import S2N, OpenSSL, JavaSSL
 
 
 # The boolean configuration will let a test run for True and False
@@ -16,6 +18,7 @@ PROTOCOLS = [
     Protocols.TLS12,
     Protocols.TLS11,
     Protocols.TLS10,
+    Protocols.SSLv3,
 ]
 
 
@@ -50,6 +53,17 @@ ALL_TEST_CERTS = [
     Certificates.RSA_4096_SHA256,
     Certificates.RSA_4096_SHA384,
     Certificates.RSA_4096_SHA512,
+    Certificates.ECDSA_256,
+    Certificates.ECDSA_384,
+    Certificates.ECDSA_521,
+    Certificates.RSA_PSS_2048_SHA256,
+]
+
+
+# List of certificates which enable all cipher suites
+MINIMAL_TEST_CERTS = [
+    Certificates.RSA_2048_SHA512,
+    Certificates.RSA_4096_SHA256,
     Certificates.ECDSA_256,
     Certificates.ECDSA_384,
     Certificates.RSA_PSS_2048_SHA256

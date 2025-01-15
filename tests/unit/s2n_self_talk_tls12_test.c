@@ -13,17 +13,14 @@
  * permissions and limitations under the License.
  */
 
-#include "s2n_test.h"
-
-#include "testlib/s2n_testlib.h"
-
-#include <sys/wait.h>
-#include <unistd.h>
-#include <time.h>
 #include <stdint.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "api/s2n.h"
-
+#include "s2n_test.h"
+#include "testlib/s2n_testlib.h"
 #include "tls/s2n_connection.h"
 #include "tls/s2n_handshake.h"
 
@@ -35,8 +32,8 @@ static const char *private_key_paths[SUPPORTED_CERTIFICATE_FORMATS] = { S2N_RSA_
 void mock_client(struct s2n_test_io_pair *io_pair)
 {
     char buffer[0xffff];
-    struct s2n_connection *conn;
-    struct s2n_config *config;
+    struct s2n_connection *conn = NULL;
+    struct s2n_config *config = NULL;
     s2n_blocked_status blocked;
 
     /* Give the server a chance to listen */
@@ -55,7 +52,7 @@ void mock_client(struct s2n_test_io_pair *io_pair)
 
     uint16_t timeout = 1;
     s2n_connection_set_dynamic_record_threshold(conn, 0x7fff, timeout);
-    int i;
+    int i = 0;
     for (i = 1; i < 0xffff - 100; i += 100) {
         for (int j = 0; j < i; j++) {
             buffer[j] = 33;
@@ -71,8 +68,8 @@ void mock_client(struct s2n_test_io_pair *io_pair)
     s2n_connection_release_buffers(conn);
 
     /* Simulate timeout second conneciton inactivity and tolerate 50 ms error */
-    struct timespec sleep_time = {.tv_sec = timeout, .tv_nsec = 50000000};
-    int r;
+    struct timespec sleep_time = { .tv_sec = timeout, .tv_nsec = 50000000 };
+    int r = 0;
     do {
         r = nanosleep(&sleep_time, &sleep_time);
     } while (r != 0);
@@ -84,7 +81,7 @@ void mock_client(struct s2n_test_io_pair *io_pair)
     }
 
     int shutdown_rc = -1;
-    while(shutdown_rc != 0) {
+    while (shutdown_rc != 0) {
         shutdown_rc = s2n_shutdown(conn, &blocked);
     }
 
@@ -96,26 +93,21 @@ void mock_client(struct s2n_test_io_pair *io_pair)
 
     s2n_io_pair_close_one_end(io_pair, S2N_CLIENT);
 
-    _exit(0);
+    exit(0);
 }
 
 int main(int argc, char **argv)
 {
-    struct s2n_connection *conn;
-    struct s2n_config *config;
+    struct s2n_connection *conn = NULL;
+    struct s2n_config *config = NULL;
     s2n_blocked_status blocked;
-    int status;
-    pid_t pid;
-    char *cert_chain_pem;
-    char *private_key_pem;
-    char *dhparams_pem;
+    int status = 0;
+    char *cert_chain_pem = NULL;
+    char *private_key_pem = NULL;
+    char *dhparams_pem = NULL;
 
     BEGIN_TEST();
     EXPECT_SUCCESS(s2n_disable_tls13_in_test());
-    EXPECT_NOT_NULL(cert_chain_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
-    EXPECT_NOT_NULL(private_key_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
-    EXPECT_NOT_NULL(dhparams_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
-
     for (int is_dh_key_exchange = 0; is_dh_key_exchange <= 1; is_dh_key_exchange++) {
         struct s2n_cert_chain_and_key *chain_and_keys[SUPPORTED_CERTIFICATE_FORMATS];
 
@@ -124,7 +116,7 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_io_pair_init(&io_pair));
 
         /* Create a child process */
-        pid = fork();
+        pid_t pid = fork();
         if (pid == 0) {
             /* This is the client process, close the server end of the pipe */
             EXPECT_SUCCESS(s2n_io_pair_close_one_end(&io_pair, S2N_SERVER));
@@ -132,6 +124,10 @@ int main(int argc, char **argv)
             /* Write the fragmented hello message */
             mock_client(&io_pair);
         }
+
+        EXPECT_NOT_NULL(cert_chain_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
+        EXPECT_NOT_NULL(private_key_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
+        EXPECT_NOT_NULL(dhparams_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
 
         /* This is the server process, close the client end of the pipe */
         EXPECT_SUCCESS(s2n_io_pair_close_one_end(&io_pair, S2N_CLIENT));
@@ -163,7 +159,7 @@ int main(int argc, char **argv)
 
         char buffer[0xffff];
         for (int i = 1; i < 0xffff; i += 100) {
-            char * ptr = buffer;
+            char *ptr = buffer;
             int size = i;
 
             do {
@@ -172,7 +168,7 @@ int main(int argc, char **argv)
 
                 size -= bytes_read;
                 ptr += bytes_read;
-            } while(size);
+            } while (size);
 
             for (int j = 0; j < i; j++) {
                 EXPECT_EQUAL(buffer[j], 33);
@@ -186,7 +182,7 @@ int main(int argc, char **argv)
         do {
             shutdown_rc = s2n_shutdown(conn, &blocked);
             EXPECT_TRUE(shutdown_rc == 0 || (errno == EAGAIN && blocked));
-        } while(shutdown_rc != 0);
+        } while (shutdown_rc != 0);
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
         for (int cert = 0; cert < SUPPORTED_CERTIFICATE_FORMATS; cert++) {
@@ -198,11 +194,11 @@ int main(int argc, char **argv)
         EXPECT_EQUAL(waitpid(-1, &status, 0), pid);
         EXPECT_EQUAL(status, 0);
         EXPECT_SUCCESS(s2n_io_pair_close_one_end(&io_pair, S2N_SERVER));
-    }
 
-    free(cert_chain_pem);
-    free(private_key_pem);
-    free(dhparams_pem);
+        free(cert_chain_pem);
+        free(private_key_pem);
+        free(dhparams_pem);
+    }
 
     END_TEST();
     return 0;

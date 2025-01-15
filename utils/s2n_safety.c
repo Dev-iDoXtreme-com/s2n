@@ -13,11 +13,12 @@
  * permissions and limitations under the License.
  */
 
+#include "utils/s2n_safety.h"
+
 #include <stdint.h>
 #include <stdio.h>
 
 #include "utils/s2n_annotations.h"
-#include "utils/s2n_safety.h"
 
 /**
  * Given arrays "a" and "b" of length "len", determine whether they
@@ -60,7 +61,7 @@ bool s2n_constant_time_equals(const uint8_t *a, const uint8_t *b, const uint32_t
     uint8_t xor = !((a_inc == 1) & (b_inc == 1));
 
     /* iterate over each byte in the slices */
-    for (uint32_t i = 0; i < len; i++) {
+    for (size_t i = 0; i < len; i++) {
         /* Invariants must hold for each execution of the loop
          * and at loop exit, hence the <= */
         S2N_INVARIANT(i <= len);
@@ -87,7 +88,7 @@ bool s2n_constant_time_equals(const uint8_t *a, const uint8_t *b, const uint32_t
  * will affect the timing of this function).
  *
  */
-int s2n_constant_time_copy_or_dont(uint8_t * dest, const uint8_t * src, uint32_t len, uint8_t dont)
+int s2n_constant_time_copy_or_dont(uint8_t *dest, const uint8_t *src, uint32_t len, uint8_t dont)
 {
     S2N_PUBLIC_INPUT(dest);
     S2N_PUBLIC_INPUT(src);
@@ -98,7 +99,7 @@ int s2n_constant_time_copy_or_dont(uint8_t * dest, const uint8_t * src, uint32_t
     /* dont = 0 : mask = 0xff */
     /* dont > 0 : mask = 0x00 */
 
-    for (uint32_t i = 0; i < len; i++) {
+    for (size_t i = 0; i < len; i++) {
         uint8_t old = dest[i];
         uint8_t diff = (old ^ src[i]) & mask;
         dest[i] = old ^ diff;
@@ -113,7 +114,7 @@ int s2n_constant_time_copy_or_dont(uint8_t * dest, const uint8_t * src, uint32_t
  *
  * Normally, one would fill dst with random bytes before calling this function.
  */
-int s2n_constant_time_pkcs1_unpad_or_dont(uint8_t * dst, const uint8_t * src, uint32_t srclen, uint32_t expectlen)
+int s2n_constant_time_pkcs1_unpad_or_dont(uint8_t *dst, const uint8_t *src, uint32_t srclen, uint32_t expectlen)
 {
     S2N_PUBLIC_INPUT(dst);
     S2N_PUBLIC_INPUT(src);
@@ -137,9 +138,9 @@ int s2n_constant_time_pkcs1_unpad_or_dont(uint8_t * dst, const uint8_t * src, ui
 
     dont_copy |= src[0] ^ 0x00;
     dont_copy |= src[1] ^ 0x02;
-    dont_copy |= *(start_of_data-1) ^ 0x00;
+    dont_copy |= *(start_of_data - 1) ^ 0x00;
 
-    for (uint32_t i = 2; i < srclen - expectlen - 1; i++) {
+    for (size_t i = 2; i < srclen - expectlen - 1; i++) {
         /* Note! We avoid using logical NOT (!) here; while in practice
          * many compilers will use constant-time sequences for this operator,
          * at least on x86 (e.g. cmp -> setcc, or vectorized pcmpeq), this is
@@ -156,20 +157,32 @@ int s2n_constant_time_pkcs1_unpad_or_dont(uint8_t * dst, const uint8_t * src, ui
     return 0;
 }
 
-static bool s_s2n_in_unit_test = false;
+static bool s2n_in_unit_test_value = false;
+static bool s2n_in_integ_test_value = false;
 
-bool s2n_in_unit_test()
+int s2n_in_unit_test_set(bool is_unit)
 {
-    return s_s2n_in_unit_test;
-}
-
-int s2n_in_unit_test_set(bool newval)
-{
-    s_s2n_in_unit_test = newval;
+    s2n_in_unit_test_value = is_unit;
     return S2N_SUCCESS;
 }
 
-int s2n_align_to(uint32_t initial, uint32_t alignment, uint32_t* out)
+int s2n_in_integ_test_set(bool is_integ)
+{
+    s2n_in_integ_test_value = is_integ;
+    return S2N_SUCCESS;
+}
+
+bool s2n_in_unit_test()
+{
+    return s2n_in_unit_test_value;
+}
+
+bool s2n_in_test()
+{
+    return s2n_in_unit_test_value || s2n_in_integ_test_value;
+}
+
+int s2n_align_to(uint32_t initial, uint32_t alignment, uint32_t *out)
 {
     POSIX_ENSURE_REF(out);
     POSIX_ENSURE(alignment != 0, S2N_ERR_SAFETY);
@@ -185,7 +198,7 @@ int s2n_align_to(uint32_t initial, uint32_t alignment, uint32_t* out)
     return S2N_SUCCESS;
 }
 
-int s2n_mul_overflow(uint32_t a, uint32_t b, uint32_t* out)
+int s2n_mul_overflow(uint32_t a, uint32_t b, uint32_t *out)
 {
     POSIX_ENSURE_REF(out);
     const uint64_t result = ((uint64_t) a) * ((uint64_t) b);
@@ -194,7 +207,7 @@ int s2n_mul_overflow(uint32_t a, uint32_t b, uint32_t* out)
     return S2N_SUCCESS;
 }
 
-int s2n_add_overflow(uint32_t a, uint32_t b, uint32_t* out)
+int s2n_add_overflow(uint32_t a, uint32_t b, uint32_t *out)
 {
     POSIX_ENSURE_REF(out);
     uint64_t result = ((uint64_t) a) + ((uint64_t) b);
@@ -203,7 +216,7 @@ int s2n_add_overflow(uint32_t a, uint32_t b, uint32_t* out)
     return S2N_SUCCESS;
 }
 
-int s2n_sub_overflow(uint32_t a, uint32_t b, uint32_t* out)
+int s2n_sub_overflow(uint32_t a, uint32_t b, uint32_t *out)
 {
     POSIX_ENSURE_REF(out);
     POSIX_ENSURE(a >= b, S2N_ERR_INTEGER_OVERFLOW);

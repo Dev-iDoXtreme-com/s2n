@@ -13,41 +13,37 @@
  * permissions and limitations under the License.
  */
 
-#include "s2n_test.h"
-
-#include "testlib/s2n_testlib.h"
-#include "testlib/s2n_sslv2_client_hello.h"
-
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <stdint.h>
-#include <fcntl.h>
-#include <errno.h>
 
 #include "api/s2n.h"
-
+#include "s2n_test.h"
+#include "testlib/s2n_sslv2_client_hello.h"
+#include "testlib/s2n_testlib.h"
+#include "tls/s2n_client_hello.h"
+#include "tls/s2n_connection.h"
+#include "tls/s2n_quic_support.h"
 #include "tls/s2n_tls.h"
 #include "tls/s2n_tls13.h"
-#include "tls/s2n_connection.h"
-#include "tls/s2n_client_hello.h"
-#include "tls/s2n_quic_support.h"
-
 #include "utils/s2n_blob.h"
 #include "utils/s2n_safety.h"
 
 int main(int argc, char **argv)
 {
-    struct s2n_connection *server_conn;
-    struct s2n_connection *client_conn;
-    struct s2n_stuffer *hello_stuffer;
-    struct s2n_config *tls12_config;
-    struct s2n_config *tls13_config;
-    struct s2n_cert_chain_and_key *chain_and_key;
-    struct s2n_cert_chain_and_key *tls13_chain_and_key;
-    char *cert_chain;
-    char *tls13_cert_chain;
-    char *private_key;
-    char *tls13_private_key;
+    struct s2n_connection *server_conn = NULL;
+    struct s2n_connection *client_conn = NULL;
+    struct s2n_stuffer *hello_stuffer = NULL;
+    struct s2n_config *tls12_config = NULL;
+    struct s2n_config *tls13_config = NULL;
+    struct s2n_cert_chain_and_key *chain_and_key = NULL;
+    struct s2n_cert_chain_and_key *tls13_chain_and_key = NULL;
+    char *cert_chain = NULL;
+    char *tls13_cert_chain = NULL;
+    char *private_key = NULL;
+    char *tls13_private_key = NULL;
 
     BEGIN_TEST();
     EXPECT_SUCCESS(s2n_disable_tls13_in_test());
@@ -79,9 +75,10 @@ int main(int argc, char **argv)
 
     /* Test we can successfully receive an sslv2 client hello and set a
      * tls12 connection */
-    for (uint8_t i = 0; i < 2; i++)
-    {
-        if (i == 1) { EXPECT_SUCCESS(s2n_enable_tls13_in_test()); }
+    for (uint8_t i = 0; i < 2; i++) {
+        if (i == 1) {
+            EXPECT_SUCCESS(s2n_enable_tls13_in_test());
+        }
 
         EXPECT_NOT_NULL(server_conn = s2n_connection_new(S2N_SERVER));
         EXPECT_SUCCESS(s2n_connection_set_config(server_conn, tls12_config));
@@ -138,7 +135,7 @@ int main(int argc, char **argv)
 
         s2n_connection_free(server_conn);
         s2n_connection_free(client_conn);
-    }
+    };
 
     /* Test that a tls12 client legacy version and tls12 server version
     will successfully set a tls12 connection, even when tls13 is enabled. */
@@ -165,13 +162,14 @@ int main(int argc, char **argv)
         s2n_connection_free(server_conn);
         s2n_connection_free(client_conn);
         EXPECT_SUCCESS(s2n_disable_tls13_in_test());
-    }
+    };
 
     /* Test that a tls11 client legacy version and tls12 server version
     will successfully set a tls11 connection. */
-    for (uint8_t i = 0; i < 2; i++)
-    {
-        if (i == 1) { EXPECT_SUCCESS(s2n_enable_tls13_in_test()); }
+    for (uint8_t i = 0; i < 2; i++) {
+        if (i == 1) {
+            EXPECT_SUCCESS(s2n_enable_tls13_in_test());
+        }
 
         EXPECT_NOT_NULL(server_conn = s2n_connection_new(S2N_SERVER));
         EXPECT_NOT_NULL(client_conn = s2n_connection_new(S2N_CLIENT));
@@ -222,7 +220,7 @@ int main(int argc, char **argv)
         s2n_connection_free(server_conn);
         s2n_connection_free(client_conn);
         EXPECT_SUCCESS(s2n_disable_tls13_in_test());
-    }
+    };
     /* Test that an erroneous client legacy version and tls13 server version
     will still successfully set a tls13 connection, when real client version is tls13. */
     {
@@ -261,7 +259,7 @@ int main(int argc, char **argv)
         s2n_connection_free(server_conn);
         s2n_connection_free(client_conn);
         EXPECT_SUCCESS(s2n_disable_tls13_in_test());
-    }
+    };
 
     /* Test that a tls12 client legacy version and tls13 server version
     will still successfully set a tls13 connection, if possible. */
@@ -288,8 +286,8 @@ int main(int argc, char **argv)
         s2n_connection_free(server_conn);
         s2n_connection_free(client_conn);
         EXPECT_SUCCESS(s2n_disable_tls13_in_test());
-    }
-     /* Test that an erroneous(tls13) client legacy version and tls13 server version
+    };
+    /* Test that an erroneous(tls13) client legacy version and tls13 server version
     will still successfully set a tls12 connection, if tls12 is the true client version. */
     {
         EXPECT_NOT_NULL(client_conn = s2n_connection_new(S2N_CLIENT));
@@ -322,7 +320,7 @@ int main(int argc, char **argv)
         s2n_connection_free(server_conn);
         s2n_connection_free(client_conn);
         EXPECT_SUCCESS(s2n_disable_tls13_in_test());
-    }
+    };
 
     /* s2n receiving a client hello will error when parsing an empty cipher suite */
     {
@@ -336,7 +334,7 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_client_hello_send(client_conn));
 
-        uint8_t empty_cipher_suite[S2N_TLS_CIPHER_SUITE_LEN] = {0};
+        uint8_t empty_cipher_suite[S2N_TLS_CIPHER_SUITE_LEN] = { 0 };
 
         /* Move write_cursor to cipher_suite position */
         EXPECT_SUCCESS(s2n_stuffer_rewrite(hello_stuffer));
@@ -348,7 +346,7 @@ int main(int argc, char **argv)
 
         s2n_connection_free(server_conn);
         s2n_connection_free(client_conn);
-    }
+    };
 
     /* s2n receiving a sslv2 client hello will error when parsing an empty cipher suite */
     {
@@ -361,7 +359,12 @@ int main(int argc, char **argv)
 
         /* Writing a sslv2 client hello with a length 0 cipher suite list */
         uint8_t sslv2_client_hello[] = {
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x20,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x20,
             SSLv2_CLIENT_HELLO_CIPHER_SUITES,
             SSLv2_CLIENT_HELLO_CHALLENGE,
         };
@@ -376,7 +379,7 @@ int main(int argc, char **argv)
         EXPECT_FAILURE_WITH_ERRNO(s2n_client_hello_recv(server_conn), S2N_ERR_BAD_MESSAGE);
 
         s2n_connection_free(server_conn);
-    }
+    };
 
     /* Test that S2N will accept a ClientHello with legacy_session_id set when running with QUIC.
      * Since this requirement is a SHOULD, we're accepting it for non-compliant endpoints.
@@ -386,7 +389,7 @@ int main(int argc, char **argv)
 
         const size_t test_session_id_len = 10;
 
-        struct s2n_config *quic_config;
+        struct s2n_config *quic_config = NULL;
         EXPECT_NOT_NULL(quic_config = s2n_config_new());
         EXPECT_SUCCESS(s2n_config_enable_quic(quic_config));
         EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key_to_store(quic_config, tls13_chain_and_key));
@@ -407,7 +410,7 @@ int main(int argc, char **argv)
 
             s2n_connection_free(client_conn);
             s2n_connection_free(server_conn);
-        }
+        };
 
         /* Also, succeeds with a session id */
         {
@@ -427,7 +430,7 @@ int main(int argc, char **argv)
 
             s2n_connection_free(client_conn);
             s2n_connection_free(server_conn);
-        }
+        };
 
         s2n_config_free(quic_config);
     }
@@ -450,21 +453,28 @@ int main(int argc, char **argv)
         server_conn->psk_params.chosen_psk = &chosen_psk;
         EXPECT_SUCCESS(s2n_client_hello_recv(server_conn));
 
-        EXPECT_EQUAL(server_conn->handshake_params.conn_sig_scheme.iana_value, 0);
+        EXPECT_EQUAL(server_conn->handshake_params.server_cert_sig_scheme->iana_value, 0);
         EXPECT_NULL(server_conn->handshake_params.our_chain_and_key);
 
         EXPECT_SUCCESS(s2n_connection_free(client_conn));
         EXPECT_SUCCESS(s2n_connection_free(server_conn));
-    }
+    };
 
-    /* Test that curve selection will be NIST P-256 when tls12 client does not sending curve extension. */
+    /* Test that curve selection will be NIST P-256 when tls12 client does not send curve extension.
+     *
+     *= https://www.rfc-editor.org/rfc/rfc4492#section-4
+     *= type=test
+     *# A client that proposes ECC cipher suites may choose not to include these extensions.
+     *# In this case, the server is free to choose any one of the elliptic curves or point formats listed in Section 5.
+     */
     {
         S2N_BLOB_FROM_HEX(tls12_client_hello_no_curves,
-            "030307de81928fe1" "7cba77904c2798da" "2521a76b013a16e4" "21ade32208f658d4" "327d000048000400"
-            "05000a0016002f00" "3300350039003c00" "3d0067006b009c00" "9d009e009fc009c0" "0ac011c012c013c0"
-            "14c023c024c027c0" "28c02bc02cc02fc0" "30cca8cca9ccaaff" "04ff0800ff010000" "30000d0016001404"
-            "0105010601030104" "0305030603030302" "010203000b000201" "00fe01000c000a00" "17000d0013000100"
-            "0a");
+                /* clang-format off */
+                "030307de81928fe1" "7cba77904c2798da" "2521a76b013a16e4" "21ade32208f658d4" "327d000048000400"
+                "05000a0016002f00" "3300350039003c00" "3d0067006b009c00" "9d009e009fc009c0" "0ac011c012c013c0"
+                "14c023c024c027c0" "28c02bc02cc02fc0" "30cca8cca9ccaaff" "04ff0800ff010000" "30000d0016001404"
+                "0105010601030104" "0305030603030302" "010203000b000201" "00fe01000c000a00" "17000d0013000100"
+                "0a" /* clang-format on */);
 
         /* The above code is generated the following code,
             disabling s2n_client_supported_groups_extension
@@ -497,7 +507,46 @@ int main(int argc, char **argv)
 
         s2n_connection_free(server_conn);
         EXPECT_SUCCESS(s2n_disable_tls13_in_test());
-    }
+    };
+
+    /* Test: Parse fragmented sslv2 client hello.
+     *
+     * Even if the sslv2 client hello is sent in one packet, there is no requirement
+     * that our first call to conn->recv returns the whole message. sslv2 uses separate
+     * record parsing code, so we need to ensure that those paths can handle partial reads.
+     */
+    {
+        DEFER_CLEANUP(struct s2n_connection *server = s2n_connection_new(S2N_SERVER),
+                s2n_connection_ptr_free);
+        EXPECT_SUCCESS(s2n_connection_set_config(server, tls12_config));
+
+        struct s2n_stuffer server_in = { 0 };
+        uint8_t sslv2_client_hello_bytes[] = {
+            SSLv2_CLIENT_HELLO_HEADER,
+            SSLv2_CLIENT_HELLO_PREFIX,
+            SSLv2_CLIENT_HELLO_CIPHER_SUITES,
+            SSLv2_CLIENT_HELLO_CHALLENGE,
+        };
+        EXPECT_SUCCESS(s2n_blob_init(&server_in.blob,
+                sslv2_client_hello_bytes, sizeof(sslv2_client_hello_bytes)));
+        EXPECT_SUCCESS(s2n_connection_set_recv_io_stuffer(&server_in, server));
+
+        /* Read message one byte at a time */
+        s2n_blocked_status blocked = S2N_NOT_BLOCKED;
+        for (size_t i = 0; i < sizeof(sslv2_client_hello_bytes); i++) {
+            EXPECT_ERROR_WITH_ERRNO(
+                    s2n_negotiate_until_message(server, &blocked, SERVER_HELLO),
+                    S2N_ERR_IO_BLOCKED);
+            EXPECT_EQUAL(blocked, S2N_BLOCKED_ON_READ);
+            EXPECT_SUCCESS(s2n_stuffer_skip_write(&server_in, 1));
+        }
+
+        /* Successfully read the full message */
+        EXPECT_OK(s2n_negotiate_until_message(server, &blocked, SERVER_HELLO));
+        EXPECT_EQUAL(server->client_protocol_version, S2N_TLS12);
+        EXPECT_EQUAL(server->client_hello_version, S2N_SSLv2);
+        EXPECT_TRUE(server->client_hello.sslv2);
+    };
 
     s2n_config_free(tls12_config);
     s2n_config_free(tls13_config);

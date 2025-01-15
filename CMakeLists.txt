@@ -1,4 +1,4 @@
-cmake_minimum_required (VERSION 3.0)
+cmake_minimum_required (VERSION 3.9)
 project (s2n C)
 
 if(POLICY CMP0077)
@@ -19,26 +19,31 @@ set(VERSION_MAJOR 1)
 set(VERSION_MINOR 0)
 set(VERSION_PATCH 0)
 
-
-option(S2N_NO_PQ "Disables all Post Quantum Crypto code. You likely want this
-for older compilers or uncommon platforms." OFF)
-option(S2N_NO_PQ_ASM "Turns off the ASM for PQ Crypto even if it's available for the toolchain.
-You likely want this on older compilers." OFF)
 option(SEARCH_LIBCRYPTO "Set this if you want to let S2N search libcrypto for you,
 otherwise a crypto target needs to be defined." ON)
 option(UNSAFE_TREAT_WARNINGS_AS_ERRORS "Compiler warnings are treated as errors. Warnings may
 indicate danger points where you should verify with the S2N-TLS developers that the security of
 the library is not compromised. Turn this OFF to ignore warnings." ON)
+option(S2N_WERROR_ALL "This option will cause all artifacts linked to libs2n to use the 
+-Werror setting." OFF)
 option(S2N_INTERN_LIBCRYPTO "This ensures that s2n-tls is compiled and deployed with a specific
 version of libcrypto by interning the code and hiding symbols. This also enables s2n-tls to be
 loaded in an application with an otherwise conflicting libcrypto version." OFF)
 option(S2N_LTO, "Enables link time optimizations when building s2n-tls." OFF)
-option(S2N_STACKTRACE "Enables stacktrace functionality in s2n-tls." ON)
-
-# Turn BUILD_TESTING=ON by default
-include(CTest)
+option(S2N_STACKTRACE "Enables stacktrace functionality in s2n-tls. Note that this functionality is
+only available on platforms that support execinfo." ON)
+option(COVERAGE "Enable profiling collection for code coverage calculation" OFF)
+option(BUILD_TESTING "Build tests for s2n-tls. By default only unit tests are built." ON)
+option(S2N_INTEG_TESTS "Enable the integrationv2 tests" OFF)
+option(S2N_FAST_INTEG_TESTS "Enable the integrationv2 with more parallelism, only has effect if S2N_INTEG_TESTS=ON" ON)
+option(S2N_INSTALL_S2NC_S2ND "Install the binaries s2nc and s2nd" OFF)
+option(S2N_USE_CRYPTO_SHARED_LIBS "For S2N to use shared libs in Findcrypto" OFF)
+option(TSAN "Enable ThreadSanitizer to test thread safety" OFF)
+option(ASAN "Enable AddressSanitizer to test memory safety" OFF)
+option(SECCOMP "Link with seccomp and run seccomp tests" OFF)
 
 file(GLOB API_HEADERS "api/*.h")
+file(GLOB API_UNSTABLE_HEADERS "api/unstable/*.h")
 
 file(GLOB CRYPTO_HEADERS "crypto/*.h")
 file(GLOB CRYPTO_SRC "crypto/*.c")
@@ -55,47 +60,25 @@ file(GLOB_RECURSE TLS_SRC "tls/*.c")
 file(GLOB UTILS_HEADERS "utils/*.h")
 file(GLOB UTILS_SRC "utils/*.c")
 
-# Always include the top-level pq-crypto/ files
-file(GLOB PQ_HEADERS "pq-crypto/*.h")
-file(GLOB PQ_SRC "pq-crypto/*.c")
-
 message(STATUS "Detected CMAKE_SYSTEM_PROCESSOR as ${CMAKE_SYSTEM_PROCESSOR}")
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 4)
-  message(STATUS "Detected 32-Bit system - disabling PQ crypto assembly optimizations")
-  set(S2N_NO_PQ_ASM ON)
+  message(STATUS "Detected 32-Bit system")
 else()
     message(STATUS "Detected 64-Bit system")
 endif()
 
-if(S2N_NO_PQ)
-    # PQ is disabled, so we do not include any PQ crypto code
-    message(STATUS "S2N_NO_PQ flag was detected - disabling PQ crypto")
-    set(S2N_NO_PQ_ASM ON)
-else()
-    # PQ is enabled, so include all of the PQ crypto code
-    file(GLOB PQ_HEADERS
-        "pq-crypto/*.h"
-        "pq-crypto/kyber_r3/*.h")
-
-    file(GLOB PQ_SRC
-        "pq-crypto/*.c"
-        "pq-crypto/kyber_r3/*.c")
-endif()
-
 ##be nice to visual studio users
 if(MSVC)
-    source_group("Header Files\\s2n\\api" FILES ${API_HEADERS})
+    source_group("Header Files\\s2n\\api" FILES ${API_HEADERS} ${API_UNSTABLE_HEADERS})
     source_group("Header Files\\s2n\\crypto" FILES ${CRYPTO_HEADERS})
     source_group("Header Files\\s2n\\error" FILES ${ERROR_HEADERS})
-    source_group("Header Files\\s2n\\pq-crypto" FILES ${PQ_HEADERS})
     source_group("Header Files\\s2n\\stuffer" FILES ${STUFFER_HEADERS})
     source_group("Header Files\\s2n\\tls" FILES ${TLS_HEADERS})
     source_group("Header Files\\s2n\\utils" FILES ${UTILS_HEADERS})
 
     source_group("Source Files\\crypto" FILES ${CRYPTO_SRC})
     source_group("Source Files\\error" FILES ${ERROR_SRC})
-    source_group("Source Files\\pq-crypto" FILES ${PQ_SRC})
     source_group("Source Files\\stuffer" FILES ${STUFFER_SRC})
     source_group("Source Files\\tls" FILES ${TLS_SRC})
     source_group("Source Files\\utils" FILES ${UTILS_SRC})
@@ -104,130 +87,25 @@ else()
     find_package(Threads REQUIRED)
 endif()
 
-if(S2N_NO_PQ_ASM)
-    message(STATUS "S2N_NO_PQ_ASM flag was detected - disabling PQ crypto assembly code")
-else()
-    enable_language(ASM)
-
-    # Kyber Round-3 code has several different optimizations which require
-    # specific compiler flags to be supported by the compiler.
-    # So for each needed instruction set extension we check if the compiler
-    # supports it and set proper compiler flags to be added later to the
-    # Kyber compilation units.
-    if(${CMAKE_SYSTEM_PROCESSOR} MATCHES "^(x86_64|amd64|AMD64)$")
-    
-        set(KYBER512R3_AVX2_BMI2_FLAGS "-mavx2 -mavx -mbmi2")
-        try_compile(KYBER512R3_AVX2_BMI2_SUPPORTED
-            ${CMAKE_BINARY_DIR}
-            "${CMAKE_CURRENT_LIST_DIR}/tests/features/noop_main.c"
-            COMPILE_DEFINITIONS ${KYBER512R3_AVX2_BMI2_FLAGS})
-            
-        if(KYBER512R3_AVX2_BMI2_SUPPORTED)
-            set(KYBER512R3_AVX2_BMI2_OPT_SUPPORTED ON)
-        endif()
-    endif()
-endif()
-
-if(KYBER512R3_AVX2_BMI2_OPT_SUPPORTED)
-    FILE(GLOB KYBER512R3_AVX2_BMI2_ASM_SRCS "pq-crypto/kyber_r3/*_avx2.S")
-    list(APPEND PQ_SRC ${KYBER512R3_AVX2_BMI2_ASM_SRCS})
-endif()
-
-# Probe for execinfo.h extensions (not present on some systems, notably android)
-include(CheckCSourceCompiles)
-
-# Determine if execinfo.h is available
-if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
-try_compile(
-        S2N_HAVE_EXECINFO
-        ${CMAKE_BINARY_DIR}
-        SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/features/execinfo.c"
-        LINK_LIBRARIES execinfo
-)
-else()
-try_compile(
-        S2N_HAVE_EXECINFO
-        ${CMAKE_BINARY_DIR}
-        SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/features/execinfo.c"
-)
-endif()
-
-# Determine if cpuid.h is available
-try_compile(
-        S2N_CPUID_AVAILABLE
-        ${CMAKE_BINARY_DIR}
-        SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/features/cpuid.c"
-)
-
-# Determine if features.h is available
-try_compile(
-        S2N_FEATURES_AVAILABLE
-        ${CMAKE_BINARY_DIR}
-        SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/features/features.c"
-)
-
-# Determine if __attribute__((fallthrough)) is available
-try_compile(
-        FALL_THROUGH_SUPPORTED
-        ${CMAKE_BINARY_DIR}
-        SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/features/fallthrough.c"
-        COMPILE_DEFINITIONS "-Werror"
-)
-
-# Determine if __restrict__ is available
-try_compile(
-        __RESTRICT__SUPPORTED
-        ${CMAKE_BINARY_DIR}
-        SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/features/__restrict__.c"
-        COMPILE_DEFINITIONS "-Werror"
-)
-
-# Determine if madvise() is available
-try_compile(
-        MADVISE_SUPPORTED
-        ${CMAKE_BINARY_DIR}
-        SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/features/madvise.c"
-        COMPILE_DEFINITIONS "-Werror"
-)
-
-# Determine if minherit() is available
-try_compile(
-        MINHERIT_SUPPORTED
-        ${CMAKE_BINARY_DIR}
-        SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/features/minherit.c"
-        COMPILE_DEFINITIONS "-Werror"
-)
-
-# Determine if clone() is available
-try_compile(
-        CLONE_SUPPORTED
-        ${CMAKE_BINARY_DIR}
-        SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/features/clone.c"
-        COMPILE_DEFINITIONS "-Werror"
-)
-
 if(APPLE)
     set(OS_LIBS c Threads::Threads)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     set(OS_LIBS thr execinfo)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "NetBSD")
     set(OS_LIBS Threads::Threads)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
+    set(OS_LIBS Threads::Threads kvm)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
     set(OS_LIBS Threads::Threads dl)
 else()
     set(OS_LIBS Threads::Threads dl rt)
 endif()
 
-# Compiling the unit tests rely on S2N_TEST_IN_FIPS_MODE to be set correctly
-if(S2N_FIPS)
-    add_definitions(-DS2N_TEST_IN_FIPS_MODE)
-endif()
-
 file(GLOB S2N_HEADERS
     ${API_HEADERS}
+    ${API_UNSTABLE_HEADERS}
     ${CRYPTO_HEADERS}
     ${ERROR_HEADERS}
-    ${PQ_HEADERS}
     ${STUFFER_HEADERS}
     ${TLS_HEADERS}
     ${UTILS_HEADERS}
@@ -236,7 +114,6 @@ file(GLOB S2N_HEADERS
 file(GLOB S2N_SRC
     ${CRYPTO_SRC}
     ${ERROR_SRC}
-    ${PQ_SRC}
     ${STUFFER_SRC}
     ${TLS_SRC}
     ${UTILS_SRC}
@@ -251,16 +128,39 @@ set_target_properties(${PROJECT_NAME} PROPERTIES SOVERSION ${VERSION_MAJOR})
 
 set(CMAKE_C_FLAGS_DEBUGOPT "")
 
-target_compile_options(${PROJECT_NAME} PRIVATE -pedantic -std=gnu99 -Wall -Wimplicit -Wunused -Wcomment -Wchar-subscripts
-        -Wuninitialized -Wshadow -Wcast-align -Wwrite-strings -Wno-deprecated-declarations -Wno-unknown-pragmas -Wformat-security
-        -Wno-missing-braces -Wa,--noexecstack
+target_compile_options(${PROJECT_NAME} PRIVATE 
+    -pedantic
+    -std=gnu99
+    -Wall
+    -Wcast-align
+    -Wchar-subscripts
+    -Wcomment
+    -Wformat-security
+    -Wimplicit
+    -Wshadow
+    -Wsign-compare
+    -Wuninitialized
+    -Wunused
+    -Wwrite-strings
+    
+    # Assembler Options
+    -Wa,--noexecstack
+
+    # Suppressed Warnings
+    -Wno-deprecated-declarations
+    # GCC 4 fails to parse our macros with a "missing-braces" error
+    -Wno-missing-braces
+    -Wno-strict-prototypes
+    -Wno-unknown-pragmas
 )
 
-if (UNSAFE_TREAT_WARNINGS_AS_ERRORS)
+if (S2N_WERROR_ALL)
+    target_compile_options(${PROJECT_NAME} PUBLIC -Werror)
+elseif (UNSAFE_TREAT_WARNINGS_AS_ERRORS)
     target_compile_options(${PROJECT_NAME} PRIVATE -Werror )
 endif ()
 
-if(BUILD_TESTING AND BUILD_SHARED_LIBS)
+if(BUILD_TESTING AND BUILD_SHARED_LIBS OR S2N_FUZZ_TEST)
     target_compile_options(${PROJECT_NAME} PRIVATE -fvisibility=default)
 else()
     target_compile_options(${PROJECT_NAME} PRIVATE -fvisibility=hidden -DS2N_EXPORTS)
@@ -278,75 +178,73 @@ if(NOT APPLE)
     set(CMAKE_SHARED_LINKER_FLAGS -Wl,-z,noexecstack,-z,relro,-z,now)
 endif()
 
-if(S2N_NO_PQ)
-    target_compile_options(${PROJECT_NAME} PUBLIC -DS2N_NO_PQ)
-endif()
-
-if(KYBER512R3_AVX2_BMI2_OPT_SUPPORTED)
-    FILE(GLOB KYBER512R3_AVX2_BMI2_SRCS "pq-crypto/kyber_r3/*.c")
-    set_source_files_properties(${KYBER512R3_AVX2_BMI2_SRCS} PROPERTIES COMPILE_FLAGS ${KYBER512R3_AVX2_BMI2_FLAGS})
-    target_compile_options(${PROJECT_NAME} PUBLIC -DS2N_KYBER512R3_AVX2_BMI2)
-
-    message(STATUS "Enabling Kyber_R3 x86_64 optimizations")
-endif()
-
-if(S2N_HAVE_EXECINFO AND S2N_STACKTRACE)
-    target_compile_options(${PROJECT_NAME} PUBLIC -DS2N_STACKTRACE)
-else()
-    message(STATUS "Disabling stacktrace functionality")
-endif()
-
-if(S2N_CPUID_AVAILABLE)
-    target_compile_options(${PROJECT_NAME} PUBLIC -DS2N_CPUID_AVAILABLE)
-endif()
-
-if(S2N_FEATURES_AVAILABLE)
-    target_compile_options(${PROJECT_NAME} PUBLIC -DS2N_FEATURES_AVAILABLE)
+# Whether to fail the build when compiling s2n's portable C code with non-portable assembly optimizations. Doing this
+# can lead to runtime crashes if build artifacts are built on modern hardware, but deployed to older hardware without
+# newer CPU instructions. s2n, by default, should be backwards compatible with older CPU types so this flag should be
+# enabled in s2n's CI builds and tests, but other consumers of s2n may have stronger control of what CPU types they
+# deploy to, and can enable more CPU optimizations.
+if(S2N_BLOCK_NONPORTABLE_OPTIMIZATIONS)
+    target_compile_options(${PROJECT_NAME} PUBLIC -DS2N_BLOCK_NONPORTABLE_OPTIMIZATIONS=1)
 endif()
 
 target_compile_options(${PROJECT_NAME} PUBLIC -fPIC)
 
-target_compile_definitions(${PROJECT_NAME} PRIVATE -D_POSIX_C_SOURCE=200809L)
-if(CMAKE_BUILD_TYPE MATCHES Release)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE -D_FORTIFY_SOURCE=2)
+set(S2N_PRELUDE "${CMAKE_CURRENT_LIST_DIR}/utils/s2n_prelude.h")
+target_compile_options(${PROJECT_NAME} PRIVATE -include "${S2N_PRELUDE}")
+
+# Match on Release, RelWithDebInfo and MinSizeRel
+# See: https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html#variable:CMAKE_BUILD_TYPE
+if(CMAKE_BUILD_TYPE MATCHES Rel)
+    add_definitions(-DS2N_BUILD_RELEASE)
 endif()
 
 if(NO_STACK_PROTECTOR)
     target_compile_options(${PROJECT_NAME} PRIVATE -Wstack-protector -fstack-protector-all)
 endif()
 
-if(S2N_UNSAFE_FUZZING_MODE)
-    target_compile_options(${PROJECT_NAME} PRIVATE -fsanitize-coverage=trace-pc-guard -fsanitize=address,undefined,leak -fuse-ld=gold -DS2N_ADDRESS_SANITIZER=1)
+if(S2N_FUZZ_TEST)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC S2N_FUZZ_TESTING=1)
+    target_compile_options(${PROJECT_NAME} PUBLIC -fsanitize=fuzzer-no-link,leak,address,undefined)
+    target_link_libraries(${PROJECT_NAME} PUBLIC -fsanitize=fuzzer-no-link,leak,address,undefined)
 endif()
 
-if (FALL_THROUGH_SUPPORTED)
-    target_compile_options(${PROJECT_NAME} PUBLIC -DS2N_FALL_THROUGH_SUPPORTED)
+if(TSAN)
+    target_compile_options(${PROJECT_NAME} PUBLIC -fsanitize=thread -DS2N_THREAD_SANITIZER=1)
+    target_link_options(${PROJECT_NAME} PUBLIC -fsanitize=thread)
 endif()
 
-if (__RESTRICT__SUPPORTED)
-    target_compile_options(${PROJECT_NAME} PUBLIC -DS2N___RESTRICT__SUPPORTED)
+if(ASAN)
+    target_compile_options(${PROJECT_NAME} PUBLIC -fsanitize=address -DS2N_ADDRESS_SANITIZER=1)
+    target_link_options(${PROJECT_NAME} PUBLIC -fsanitize=address)
 endif()
 
-if (MADVISE_SUPPORTED)
-    target_compile_options(${PROJECT_NAME} PUBLIC -DS2N_MADVISE_SUPPORTED)
-    message(STATUS "madvise() support detected")
+if (UBSAN)
+    target_compile_options(${PROJECT_NAME} PUBLIC -fsanitize=undefined -fno-sanitize-recover=all)
+    target_link_options(${PROJECT_NAME} PUBLIC -fsanitize=undefined -fno-sanitize-recover=all)
 endif()
 
-if (MINHERIT_SUPPORTED)
-    target_compile_options(${PROJECT_NAME} PUBLIC -DS2N_MINHERIT_SUPPORTED)
-    message(STATUS "minherit() support detected")
-endif()
-
-if (CLONE_SUPPORTED)
-    target_compile_options(${PROJECT_NAME} PUBLIC -DS2N_CLONE_SUPPORTED)
-    message(STATUS "clone() support detected")
+if(TSAN OR ASAN OR UBSAN)
+    # no-omit-frame-pointer and no-optimize-sibling-calls provide better stack traces
+    target_compile_options(${PROJECT_NAME} PUBLIC -fno-omit-frame-pointer -fno-optimize-sibling-calls)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")
 
-if (NOT $ENV{S2N_LIBCRYPTO} STREQUAL "awslc")
+if (NOT $ENV{S2N_LIBCRYPTO} MATCHES "awslc")
     # add cast-qual back in for non AWS-LC
     target_compile_options(${PROJECT_NAME} PRIVATE -Wcast-qual)
+endif()
+
+if (COVERAGE)
+    # https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_COMPILER_ID.html
+    # Coverage is done using LLVM source based coverage. This is only supported
+    # on LLVM compilers. GCC would fail with "unrecognized compile options"
+    # on -fprofile-instr-generate -fcoverage-mapping flags.
+    if (NOT ${CMAKE_C_COMPILER_ID} MATCHES Clang)
+        message(FATAL_ERROR "This project requires clang for coverage support. You are currently using " ${CMAKE_C_COMPILER_ID})
+    endif()
+    target_compile_options(${PROJECT_NAME} PUBLIC -fprofile-instr-generate -fcoverage-mapping)
+    target_link_options(${PROJECT_NAME} PUBLIC -fprofile-instr-generate -fcoverage-mapping)
 endif()
 
 # For interning, we need to find the static libcrypto library. Cmake configs
@@ -374,41 +272,99 @@ if (S2N_INTERN_LIBCRYPTO)
     message(STATUS "Enabling libcrypto interning")
 endif()
 
-# Determine if EVP_md5_sha1 is available in libcrypto
-try_compile(
-        LIBCRYPTO_SUPPORTS_EVP_MD5_SHA1_HASH
-        ${CMAKE_BINARY_DIR}
-        SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/features/evp_md5_sha1.c"
-        LINK_LIBRARIES ${LINK_LIB} ${OS_LIBS}
-)
-if (LIBCRYPTO_SUPPORTS_EVP_MD5_SHA1_HASH)
-    target_compile_options(${PROJECT_NAME} PUBLIC -DS2N_LIBCRYPTO_SUPPORTS_EVP_MD5_SHA1_HASH)
+if (NOT DEFINED CMAKE_AR)
+    message(STATUS "CMAKE_AR undefined, setting to `ar` by default")
+    SET(CMAKE_AR ar)
+else()
+    message(STATUS "CMAKE_AR found: ${CMAKE_AR}")
 endif()
 
-# Determine if RC4 is available in libcrypto
-try_compile(
-        LIBCRYPTO_SUPPORTS_EVP_RC4
-        ${CMAKE_BINARY_DIR}
-        SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/features/evp_rc4.c"
-        LINK_LIBRARIES ${LINK_LIB} ${OS_LIBS}
-)
-
-if (LIBCRYPTO_SUPPORTS_EVP_RC4)
-    target_compile_options(${PROJECT_NAME} PUBLIC -DS2N_LIBCRYPTO_SUPPORTS_EVP_RC4)
+if (NOT DEFINED CMAKE_RANLIB)
+    message(STATUS "CMAKE_RANLIB undefined, setting to `ranlib` by default")
+    SET(CMAKE_RANLIB ranlib)
+else()
+    message(STATUS "CMAKE_RANLIB found: ${CMAKE_RANLIB}")
 endif()
 
-# Determine if EVP_MD_CTX_set_pkey_ctx is available in libcrypto
-try_compile(
-        LIBCRYPTO_SUPPORTS_EVP_MD_CTX_SET_PKEY_CTX
+if (NOT DEFINED CMAKE_OBJCOPY)
+    message(STATUS "CMAKE_OBJCOPY undefined, setting to `objcopy` by default")
+    SET(CMAKE_OBJCOPY objcopy)
+else()
+    message(STATUS "CMAKE_OBJCOPY found: ${CMAKE_OBJCOPY}")
+endif()
+
+# Sets the result of the feature probe to `IS_AVAILABLE`
+function(feature_probe_result PROBE_NAME IS_AVAILABLE)
+    # normalize the boolean value
+    if(IS_AVAILABLE)
+        set(NORMALIZED TRUE)
+    else()
+        set(NORMALIZED FALSE)
+    endif()
+
+    # indicate the status of the probe
+    message(STATUS "feature ${PROBE_NAME}: ${NORMALIZED}")
+    # set the probe result in the parent scope for other probes
+    set(${PROBE_NAME} ${NORMALIZED} PARENT_SCOPE)
+
+    # define the probe if available
+    if(NORMALIZED)
+        add_definitions(-D${PROBE_NAME})
+    endif()
+endfunction()
+
+# Tries to compile a feature probe and initializes the corresponding flags
+function(feature_probe PROBE_NAME)
+    # Load the global probe flags
+    file(READ "${CMAKE_CURRENT_LIST_DIR}/tests/features/GLOBAL.flags" GLOBAL_FILE)
+    string(REPLACE "\n" "" GLOBAL_FLAGS "${GLOBAL_FILE}")
+
+    # Load the probe's flags
+    file(READ "${CMAKE_CURRENT_LIST_DIR}/tests/features/${PROBE_NAME}.flags" PROBE_FILE)
+    string(REPLACE "\n" "" PROBE_FLAGS "${PROBE_FILE}")
+
+    # Try to compile the probe with the given flags
+    try_compile(
+        IS_AVAILABLE
         ${CMAKE_BINARY_DIR}
-        SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/features/evp_md_ctx_set_pkey_ctx.c"
+        SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/features/${PROBE_NAME}.c"
         LINK_LIBRARIES ${LINK_LIB} ${OS_LIBS}
         CMAKE_FLAGS ${ADDITIONAL_FLAGS}
-)
+        COMPILE_DEFINITIONS -I "${CMAKE_CURRENT_LIST_DIR}" -include "${CMAKE_CURRENT_LIST_DIR}/utils/s2n_prelude.h" -c ${GLOBAL_FLAGS} ${PROBE_FLAGS}
+        ${ARGN}
+        OUTPUT_VARIABLE TRY_COMPILE_OUTPUT
+    )
+    # Uncomment the line below to get the output of the try_compile command
+    #message(STATUS "Output of try_compile: ${TRY_COMPILE_OUTPUT}")
 
-if (LIBCRYPTO_SUPPORTS_EVP_MD_CTX_SET_PKEY_CTX)
-    target_compile_options(${PROJECT_NAME} PUBLIC -DS2N_LIBCRYPTO_SUPPORTS_EVP_MD_CTX_SET_PKEY_CTX)
+    # Set the result of the probe
+    feature_probe_result(${PROBE_NAME} ${IS_AVAILABLE})
+
+    # Make sure the variable is set in the parent scope
+    set(${PROBE_NAME} ${IS_AVAILABLE} PARENT_SCOPE)
+
+    # Set the flags that we used for the probe
+    set(${PROBE_NAME}_FLAGS ${PROBE_FLAGS} PARENT_SCOPE)
+endfunction()
+
+# Iterate over all of the features and try to compile them
+FILE(GLOB FEATURE_SRCS "${CMAKE_CURRENT_LIST_DIR}/tests/features/*.c")
+list(SORT FEATURE_SRCS)
+foreach(file ${FEATURE_SRCS})
+    get_filename_component(feature_name ${file} NAME_WE)
+    feature_probe(${feature_name})
+endforeach()
+
+# FreeBSD might need to link to execinfo explicitly
+if(NOT S2N_EXECINFO_AVAILABLE AND CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+    feature_probe(S2N_EXECINFO_AVAILABLE LINK_LIBRARIES execinfo)
 endif()
+
+# Stack traces are only available if execinfo is
+if (NOT S2N_EXECINFO_AVAILABLE)
+    set(S2N_STACKTRACE FALSE)
+endif()
+feature_probe_result(S2N_STACKTRACE ${S2N_STACKTRACE})
 
 if (S2N_INTERN_LIBCRYPTO)
 
@@ -446,14 +402,14 @@ if (S2N_INTERN_LIBCRYPTO)
           # copy the static version of libcrypto
           cp ${crypto_STATIC_LIBRARY} s2n_libcrypto.a &&
           # dump all of the symbols and prefix them with `s2n$`
-          bash -c "nm s2n_libcrypto.a | awk '/ [A-Z] /{print $3\" s2n$\"$3}' | sort | uniq > libcrypto.symbols" &&
+          bash -c "${CMAKE_NM} s2n_libcrypto.a | awk '/ [A-Z] /{if ($3) print $3\" s2n$\"$3}' | sort | uniq > libcrypto.symbols" &&
           # redefine the libcrypto libary symbols
-          objcopy --redefine-syms libcrypto.symbols s2n_libcrypto.a &&
+          ${CMAKE_OBJCOPY} --redefine-syms libcrypto.symbols s2n_libcrypto.a &&
           rm -rf s2n_libcrypto &&
           mkdir s2n_libcrypto &&
           cd s2n_libcrypto &&
           # extract libcrypto objects from the archive
-          ar x ../s2n_libcrypto.a &&
+          ${CMAKE_AR} x ../s2n_libcrypto.a &&
           # rename all of the object files so we don't have any object name collisions
           bash -c "find . -name '*.o' -type f -print0 | xargs -0 -n1 -- basename | xargs -I{} mv {} s2n_crypto__{}"
         VERBATIM
@@ -491,7 +447,7 @@ if (S2N_INTERN_LIBCRYPTO)
             TARGET ${PROJECT_NAME} POST_BUILD
             DEPENDS libcrypto.symbols
             COMMAND
-              bash -c "ar -r lib/libs2n.a s2n_libcrypto/*.o"
+                bash -c "${CMAKE_AR} -r lib/libs2n.a s2n_libcrypto/*.o"
             VERBATIM
         )
     endif()
@@ -508,16 +464,28 @@ target_include_directories(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:${CMAKE_CURR
 if (BUILD_TESTING)
     enable_testing()
 
-    file(GLOB TESTLIB_SRC "tests/testlib/*.c")
-    file(GLOB TESTLIB_HEADERS "tests/testlib/*.h" "tests/s2n_test.h")
+    ############################################################################
+    ################### build testlib (utility library) ########################
+    ############################################################################
 
-    add_library(testss2n STATIC ${TESTLIB_HEADERS} ${TESTLIB_SRC})
+    file(GLOB TESTLIB_SRC "tests/testlib/*.c")
+    file(GLOB EXAMPLES_SRC "docs/examples/*.c")
+
+    add_library(testss2n STATIC ${TESTLIB_SRC} ${EXAMPLES_SRC})
     target_include_directories(testss2n PUBLIC tests)
     target_compile_options(testss2n PRIVATE -std=gnu99)
+    # make sure all linked tests include the prelude
+    target_compile_options(testss2n PUBLIC -include "${S2N_PRELUDE}")
     target_link_libraries(testss2n PUBLIC ${PROJECT_NAME})
+    if (SECCOMP)
+        message(STATUS "Linking tests with seccomp")
+        target_link_libraries(testss2n PRIVATE seccomp)
+        target_compile_definitions(testss2n PRIVATE SECCOMP)
+    endif()
 
     if (S2N_INTERN_LIBCRYPTO)
-        # if libcrypto was interned, rewrite libcrypto symbols so use of internal functions will link correctly
+        # if libcrypto was interned, rewrite libcrypto symbols so use of internal
+        # functions will link correctly
         add_custom_command(
             TARGET testss2n POST_BUILD
             COMMAND
@@ -525,18 +493,74 @@ if (BUILD_TESTING)
         )
     endif()
 
-    #run unit tests
-    file (GLOB TEST_LD_PRELOAD "tests/LD_PRELOAD/*.c")
-    add_library(allocator_overrides SHARED ${TEST_LD_PRELOAD})
+    ############################################################################
+    ########################## configure unit tests ############################
+    ############################################################################
+
+    # CTest configuration variables need to be set before include(CTest) is called
+    set(VALGRIND_DEFAULT " \
+        --leak-check=full \
+        --leak-resolution=high \
+        --trace-children=yes \
+        -q --error-exitcode=123 \
+        --error-limit=no \
+        --num-callers=40 \
+        --undef-value-errors=no \
+        --track-fds=yes \
+        --log-fd=2 \
+        --suppressions=valgrind.suppressions")
+
+    # "pedantic valgrind" will error on memory that is "Still Reachable". 
+    # We only run this on OpenSSL 1.1.1 because there are hundreds of false positives in other libcryptos.
+    # Tracking issue: https://github.com/aws/s2n-tls/issues/4777
+    if ($ENV{S2N_LIBCRYPTO} MATCHES "openssl-1.1.1")
+        set(MEMORYCHECK_COMMAND_OPTIONS "${VALGRIND_DEFAULT} --run-libc-freeres=yes --errors-for-leak-kinds=all --show-leak-kinds=all")
+    else()
+        set(MEMORYCHECK_COMMAND_OPTIONS "${VALGRIND_DEFAULT} --run-libc-freeres=no")
+    endif()
+
+    set(MEMORYCHECK_TYPE "Valgrind")
+
+    set(UNIT_TEST_ENVS S2N_DONT_MLOCK=1)
+    if (TSAN OR ASAN)
+        set(UNIT_TEST_ENVS ${UNIT_TEST_ENVS} S2N_ADDRESS_SANITIZER=1)
+    endif()
+    if(TSAN)
+        set(TSAN_SUPPRESSIONS_FILE ${CMAKE_SOURCE_DIR}/tests/.tsan_suppressions)
+        if(NOT EXISTS ${TSAN_SUPPRESSIONS_FILE})
+            message(FATAL_ERROR "TSAN suppression file ${TSAN_SUPPRESSIONS_FILE} missing")
+        endif()
+        set(TSAN_OPTIONS suppressions=${TSAN_SUPPRESSIONS_FILE})
+        if(DEFINED ENV{TSAN_OPTIONS})
+            set(TSAN_OPTIONS "${TSAN_OPTIONS} $ENV{TSAN_OPTIONS}")
+        endif()
+        set(UNIT_TEST_ENVS ${UNIT_TEST_ENVS} TSAN_OPTIONS=${TSAN_OPTIONS})
+    endif()
+    if(ASAN)
+        # "detect_odr_violation" detects violations of the "one definition rule",
+        # ensuring that symbols are only defined once.
+        # But some of our unit tests intentionally include *.c files for testing,
+        # resulting in duplicate global values.
+        set(ASAN_OPTIONS detect_odr_violation=0)
+        if(DEFINED ENV{ASAN_OPTIONS})
+            set(ASAN_OPTIONS "${ASAN_OPTIONS} $ENV{ASAN_OPTIONS}")
+        endif()
+        set(UNIT_TEST_ENVS ${UNIT_TEST_ENVS} ASAN_OPTIONS=${ASAN_OPTIONS})
+    endif()
+    message(STATUS "Running tests with environment: ${UNIT_TEST_ENVS}")
+
+    include(CTest)
+
+    ############################################################################
+    ############################ build unit tests ##############################
+    ############################################################################
 
     file(GLOB UNITTESTS_SRC "tests/unit/*.c")
     foreach(test_case ${UNITTESTS_SRC})
-        string(REGEX REPLACE ".+\\/(.+)\\.c" "\\1" test_case_name ${test_case})
+        # NAME_WE: name without extension
+        get_filename_component(test_case_name ${test_case} NAME_WE)
 
         add_executable(${test_case_name} ${test_case})
-        target_include_directories(${test_case_name} PRIVATE api)
-        target_include_directories(${test_case_name} PRIVATE ./)
-        target_include_directories(${test_case_name} PRIVATE tests)
         target_link_libraries(${test_case_name} PRIVATE testss2n)
         if (S2N_INTERN_LIBCRYPTO)
             # if libcrypto was interned, rewrite libcrypto symbols so use of internal functions will link correctly
@@ -546,69 +570,171 @@ if (BUILD_TESTING)
                   find . -name '${test_case_name}.c.o' -exec objcopy --redefine-syms libcrypto.symbols {} \\\;
             )
         endif()
-        target_compile_options(${test_case_name} PRIVATE -Wno-implicit-function-declaration -Wno-deprecated -D_POSIX_C_SOURCE=200809L -std=gnu99)
-        add_test(NAME ${test_case_name} COMMAND $<TARGET_FILE:${test_case_name}> WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit)
+        target_compile_options(${test_case_name} PRIVATE 
+            -Wall -Wimplicit -Wunused -Wcomment -Wchar-subscripts -Wuninitialized 
+            -Wshadow  -Wcast-align -Wwrite-strings -Wformat-security
+            -Wno-deprecated-declarations -Wno-unknown-pragmas -Wno-deprecated -std=gnu99
+        )
+        if (S2N_LTO)
+            target_compile_options(${test_case_name} PRIVATE -flto)
+        endif()
 
-        set_property(
-        TEST
-            ${test_case_name}
-        PROPERTY
-            ENVIRONMENT LD_PRELOAD=$<TARGET_FILE:allocator_overrides>)
-
-        set_property(
-        TEST
-            ${test_case_name}
-        PROPERTY
-            ENVIRONMENT S2N_DONT_MLOCK=1)
+        add_test(
+            NAME ${test_case_name} 
+            COMMAND $<TARGET_FILE:${test_case_name}> 
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit
+        )
+        set_property(TEST ${test_case_name} PROPERTY LABELS "unit")
+        set_property(TEST ${test_case_name} PROPERTY ENVIRONMENT ${UNIT_TEST_ENVS})
 
     endforeach(test_case)
 
+    ############################################################################
+    ######################### build utility binaries ###########################
+    ############################################################################
+
     add_executable(s2nc "bin/s2nc.c" "bin/echo.c" "bin/https.c" "bin/common.c")
     target_link_libraries(s2nc ${PROJECT_NAME})
-
-    target_include_directories(s2nc PRIVATE api)
-    target_compile_options(s2nc PRIVATE -std=gnu99 -D_POSIX_C_SOURCE=200112L)
+    target_compile_options(s2nc PRIVATE -std=gnu99)
 
     add_executable(s2nd "bin/s2nd.c" "bin/echo.c" "bin/https.c" "bin/common.c")
     target_link_libraries(s2nd ${PROJECT_NAME})
+    target_compile_options(s2nd PRIVATE -std=gnu99)
 
-    target_include_directories(s2nd PRIVATE api)
-    target_compile_options(s2nd PRIVATE -std=gnu99 -D_POSIX_C_SOURCE=200112L)
+    add_executable(policy "bin/policy.c")
+    target_link_libraries(policy ${PROJECT_NAME})
+    target_compile_options(policy PRIVATE -std=gnu99)
 
     if(S2N_LTO)
         target_compile_options(s2nc PRIVATE -flto)
         target_compile_options(s2nd PRIVATE -flto)
     endif()
 
-    if(BENCHMARK)
-        find_package(benchmark REQUIRED)
-        file(GLOB BENCHMARK_SRC "tests/benchmark/*.cc")
-        file(GLOB BENCHMARK_UTILS "tests/benchmark/utils/*.cc")
-        enable_language(CXX)
-        foreach(benchmark ${BENCHMARK_SRC})
-            string(REGEX REPLACE ".+\\/(.+)\\.cc" "\\1" benchmark_name ${benchmark})
-            add_executable(${benchmark_name} ${benchmark} "bin/echo.c" "bin/common.c" ${BENCHMARK_UTILS})
-            target_include_directories(${benchmark_name} PRIVATE api)
-            target_include_directories(${benchmark_name} PRIVATE tests)
-            target_link_libraries(${benchmark_name} PUBLIC ${PROJECT_NAME} testss2n benchmark::benchmark)
+    if (S2N_INTEG_TESTS)
+        find_package (Python3 COMPONENTS Interpreter Development)
+        file(GLOB integv2_test_files "${PROJECT_SOURCE_DIR}/tests/integrationv2/test_*.py")
+        set(N 1)
+        if (S2N_FAST_INTEG_TESTS)
+            set(N auto)
+        endif()
+        foreach(test_file_path ${integv2_test_files})
+            get_filename_component(test_filename ${test_file_path} NAME_WE)
+            string(REGEX REPLACE "^test_" "integrationv2_" test_target ${test_filename})
+            if (S2N_INTEG_NIX)
+                # For Nix and environments where LD_LIBRARY_PATH is already correct.
+                # We're also dropping tox and calling pytest directly, because
+                # Nix is already handling all of the python setup.
+                if (CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64" AND ${test_target} STREQUAL "integrationv2_sslyze" )
+                  # sslyze/nassl is not available on aarch64.
+                  message(WARNING "Skipping ${test_target} due to missing tools on ${CMAKE_SYSTEM_PROCESSOR}")
+                  continue()
+                endif()
+                message(STATUS "Adding integ test ${test_target}")
+                add_test(NAME ${test_target}
+                        COMMAND
+                        pytest
+                        -x -n=${N} --reruns=2 --durations=10 --cache-clear -rpfsq
+                        -o log_cli=true --log-cli-level=DEBUG --provider-version=$ENV{S2N_LIBCRYPTO}
+                        ${test_file_path}
+                        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/tests/integrationv2
+                )
+            else()
+                # For use with libcryptos built into test-deps, and not in LD_LIBRARY_PATH.
+                # This is a duplication of tests/integrationv2/Makefile and
+                # can go away once all the Nix porting is finished.
+                add_test(NAME ${test_target}
+                        COMMAND
+                        ${CMAKE_COMMAND} -E env
+                        DYLD_LIBRARY_PATH=${PROJECT_SOURCE_DIR}/libcrypto-root/lib:$ENV{DYLD_LIBRARY_PATH}
+                        LD_LIBRARY_PATH=${PROJECT_SOURCE_DIR}/libcrypto-root/lib:${PROJECT_SOURCE_DIR}/test-deps/openssl-1.1.1/lib:${PROJECT_SOURCE_DIR}/test-deps/gnutls37/nettle/lib:$ENV{LD_LIBRARY_PATH}
+                        PATH=${PROJECT_SOURCE_DIR}/bin:${PROJECT_SOURCE_DIR}/test-deps/openssl-1.1.1/bin:${PROJECT_SOURCE_DIR}/test-deps/gnutls37/bin:$ENV{PATH}
+                        PYTHONNOUSERSITE=1
+                        S2N_INTEG_TEST=1
+                        TOX_TEST_NAME=${test_file_path}
+                        ${Python3_EXECUTABLE} -m tox
+                        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/tests/integrationv2)
+            endif()
+            set_property(TEST ${test_target} PROPERTY LABELS "integrationv2")
+            set_property(TEST ${test_target} PROPERTY TIMEOUT 7200)
+        endforeach()
+    endif()
 
-            # Based off the flags in tests/benchmark/Makefile
-            target_compile_options(${benchmark_name} PRIVATE -pedantic -Wall -Werror -Wunused -Wcomment -Wchar-subscripts
-                    -Wuninitialized -Wshadow -Wcast-qual -Wcast-align -Wwrite-strings -Wno-deprecated-declarations
-                    -Wno-unknown-pragmas -Wformat-security -Wno-missing-braces -fvisibility=hidden -Wno-unreachable-code
-                    -Wno-unused-but-set-variable)
-        endforeach(benchmark)
+    if(S2N_FUZZ_TEST)
+        message(STATUS "Fuzz build enabled")
+        set(SCRIPT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/runFuzzTest.sh")
+        file(GLOB FUZZ_TEST_SRCS "${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/*.c")
 
+        file(GLOB TESTLIB_SRC "tests/testlib/*.c")
+        file(GLOB TESTLIB_HEADERS "tests/testlib/*.h" "tests/s2n_test.h")
+
+        # This must be a shared object so that symbols can be overridden by the
+        # fuzz test specific LD_PRELOAD libraries.
+        add_library(fuzztest SHARED ${TESTLIB_SRC})
+        target_include_directories(fuzztest PUBLIC tests)
+        target_link_libraries(fuzztest PUBLIC ${PROJECT_NAME})
+
+        # Set default values for fuzzing
+        if(DEFINED ENV{FUZZ_TIMEOUT_SEC})
+            set(FUZZ_TIMEOUT_SEC $ENV{FUZZ_TIMEOUT_SEC})    
+        else()
+            set(FUZZ_TIMEOUT_SEC 60)
+        endif()
+
+        # Build LD_PRELOAD shared libraries
+        file(GLOB LIBRARY_SRCS "${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/LD_PRELOAD/*.c")
+        foreach(SRC ${LIBRARY_SRCS})
+            get_filename_component(LIB_NAME ${SRC} NAME_WE)
+            add_library(${LIB_NAME} SHARED ${SRC})
+            target_include_directories(${LIB_NAME} PRIVATE 
+                ${CMAKE_CURRENT_SOURCE_DIR}
+                ${CMAKE_CURRENT_SOURCE_DIR}/api
+            )
+        endforeach()
+
+        set(CMAKE_C_COMPILER clang)
+
+        foreach(src ${FUZZ_TEST_SRCS})
+            get_filename_component(TEST_NAME ${src} NAME_WE)
+
+            add_executable(${TEST_NAME} ${src})
+            
+            target_compile_options(${TEST_NAME} PRIVATE 
+                -g -Wno-unknown-pragmas -Wno-unused-result
+            )
+            target_link_options(${TEST_NAME} PRIVATE 
+                -fsanitize=fuzzer -lstdc++
+            )
+            target_link_libraries(${TEST_NAME} PRIVATE 
+                fuzztest
+            )
+
+            add_test(NAME ${TEST_NAME}
+                COMMAND ${CMAKE_COMMAND} -E env
+                    bash ${SCRIPT_PATH} 
+                    ${TEST_NAME} 
+                    ${FUZZ_TIMEOUT_SEC} 
+                    ${CMAKE_CURRENT_SOURCE_DIR}
+                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz
+            )
+            set_property(TEST ${TEST_NAME} PROPERTY LABELS "fuzz")
+        endforeach()
     endif()
 endif()
 
 #install the s2n files
 install(FILES ${API_HEADERS} DESTINATION "include/" COMPONENT Development)
+install(FILES ${API_UNSTABLE_HEADERS} DESTINATION "include/s2n/unstable" COMPONENT Development)
 
 if (UNIX AND NOT APPLE)
     include(GNUInstallDirs)
 elseif(NOT DEFINED CMAKE_INSTALL_LIBDIR)
     set(CMAKE_INSTALL_LIBDIR "lib")
+endif()
+
+if (S2N_INSTALL_S2NC_S2ND)
+  install(
+    TARGETS s2nc s2nd RUNTIME DESTINATION bin
+    )
 endif()
 
 install(

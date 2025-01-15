@@ -339,7 +339,8 @@ testParameters = {
 testConnection : connection
 testConnection = {
             handshake = {handshake_type = 0x00000000,
-                message_number = 0x00000000},
+                         message_number = 0x00000000,
+                         state_machine = 0x00000000},
             mode = 0x00000000,
             corked_io = False,
             corked = zero,
@@ -352,7 +353,8 @@ testConnection = {
             no_client_cert = True,
             early_data_state = zero,
             chosen_psk_null = True,
-            quic_enabled = False
+            quic_enabled = False,
+            npn_negotiated = False
         }
 
 type Character = [8]

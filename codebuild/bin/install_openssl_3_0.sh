@@ -29,7 +29,7 @@ BUILD_DIR=$1
 INSTALL_DIR=$2
 OS_NAME=$3
 source codebuild/bin/jobs.sh
-RELEASE=3.0.5
+RELEASE=3.0.7
 
 mkdir -p $BUILD_DIR
 cd "$BUILD_DIR"
@@ -44,7 +44,7 @@ mkdir -p $INSTALL_DIR
 $CONFIGURE shared -g3 -fPIC              \
          no-md2 no-rc5 no-rfc3779 no-sctp no-ssl-trace no-zlib     \
          no-hw no-mdc2 no-seed no-idea enable-ec_nistp_64_gcc_128 no-camellia\
-         no-bf no-ripemd no-dsa no-ssl2 no-ssl3 no-capieng                  \
+         no-bf no-ripemd no-dsa no-ssl2 no-ssl3 no-capieng no-dtls          \
          -DSSL_FORBID_ENULL -DOPENSSL_NO_DTLS1 -DOPENSSL_NO_HEARTBEATS      \
          --prefix="$INSTALL_DIR"
 
@@ -52,6 +52,11 @@ make -j $JOBS
 make -j $JOBS test
 make -j $JOBS install
 
+popd
+
+# sym-link lib -> lib64 since codebuild assumes /lib path
+pushd $INSTALL_DIR
+ln -s lib64 lib
 popd
 
 exit 0

@@ -13,16 +13,16 @@
  * permissions and limitations under the License.
  */
 
+#include "tls/extensions/s2n_client_pq_kem.h"
+
 #include <stdint.h>
 #include <sys/param.h>
 
-#include "tls/extensions/s2n_client_pq_kem.h"
+#include "crypto/s2n_pq.h"
 #include "tls/s2n_kem.h"
 #include "tls/s2n_security_policies.h"
 #include "tls/s2n_tls.h"
 #include "tls/s2n_tls_parameters.h"
-#include "pq-crypto/s2n_pq.h"
-
 #include "utils/s2n_safety.h"
 
 static bool s2n_client_pq_kem_should_send(struct s2n_connection *conn);
@@ -40,7 +40,7 @@ const s2n_extension_type s2n_client_pq_kem_extension = {
 
 static bool s2n_client_pq_kem_should_send(struct s2n_connection *conn)
 {
-    const struct s2n_security_policy *security_policy;
+    const struct s2n_security_policy *security_policy = NULL;
     return s2n_connection_get_security_policy(conn, &security_policy) == S2N_SUCCESS
             && s2n_pq_kem_is_extension_required(security_policy)
             && s2n_pq_is_enabled();
@@ -62,7 +62,7 @@ static int s2n_client_pq_kem_send(struct s2n_connection *conn, struct s2n_stuffe
 
 static int s2n_client_pq_kem_recv(struct s2n_connection *conn, struct s2n_stuffer *extension)
 {
-    uint16_t size_of_all;
+    uint16_t size_of_all = 0;
     struct s2n_blob *proposed_kems = &conn->kex_params.client_pq_kem_extension;
 
     /* Ignore extension if PQ is disabled */
@@ -81,16 +81,4 @@ static int s2n_client_pq_kem_recv(struct s2n_connection *conn, struct s2n_stuffe
     POSIX_ENSURE_REF(proposed_kems->data);
 
     return S2N_SUCCESS;
-}
-
-/* Old-style extension functions -- remove after extensions refactor is complete */
-
-int s2n_extensions_client_pq_kem_send(struct s2n_connection *conn, struct s2n_stuffer *out, uint16_t pq_kem_list_size)
-{
-    return s2n_extension_send(&s2n_client_pq_kem_extension, conn, out);
-}
-
-int s2n_recv_pq_kem_extension(struct s2n_connection *conn, struct s2n_stuffer *extension)
-{
-    return s2n_extension_recv(&s2n_client_pq_kem_extension, conn, extension);
 }

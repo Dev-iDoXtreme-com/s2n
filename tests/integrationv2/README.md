@@ -10,6 +10,16 @@ have all the dependencies installed correctly. The integration test dependencies
  * Compiled Java SSLSocketClient for the Java provider
  * Compiled an s2nc executable named s2nc_head in the bin directory for the cross compatibility test
 
+Alternately, you can use the "best effort" mode with `uv`. This will only run the integration tests with the currently available binaries.
+```
+# install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# run pytest
+# -x: exit on the first failure
+# -rpfs: print a (r)eport with (p)assing, (f)ailed, and (s)kipped tests.
+uv run pytest --provider-version <LINKED_LIBCRYPTO> --best-effort-NOT-FOR-CI -x -rpfs -n auto
+```
+
 ## Run all tests
 
 The fastest way to run the integrationv2 tests is to run `make` from the S2N root directory.
@@ -156,4 +166,3 @@ An example of how to test that the server and the client can send and receive ap
 **INTERNALERROR> OSError: cannot send to <Channel id=1 closed>**
 An error similar to this is caused by a runtime error in a test. In `tox.ini` change `-n8` to `-n0` to
 see the actual error causing the OSError.
-

@@ -1,10 +1,12 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 import pytest
 
 from configuration import available_ports, ALL_TEST_CIPHERS, ALL_TEST_CURVES, PROTOCOLS
-from common import ProviderOptions, Protocols, data_bytes, Certificates
-from fixtures import managed_process
+from common import ProviderOptions, data_bytes, Certificates
+from fixtures import managed_process  # lgtm [py/unused-import]
 from constants import TEST_OCSP_DIRECTORY
-from providers import Provider, S2N, OpenSSL, JavaSSL, GnuTLS
+from providers import Provider, S2N, OpenSSL, GnuTLS
 from utils import invalid_test_parameters, get_parameter_name
 from global_flags import get_flag, S2N_PROVIDER_VERSION
 
@@ -117,9 +119,9 @@ def test_s2n_server_ocsp_response(managed_process, cipher, provider, other_provi
         # it immediately after sending the message.
         kill_marker = b"Sent: "
 
-    server = managed_process(S2N, server_options, timeout=2000)
+    server = managed_process(S2N, server_options, timeout=90)
     client = managed_process(provider, client_options,
-                             timeout=2000, kill_marker=kill_marker)
+                             timeout=90, kill_marker=kill_marker)
 
     for client_results in client.get_results():
         client_results.assert_success()

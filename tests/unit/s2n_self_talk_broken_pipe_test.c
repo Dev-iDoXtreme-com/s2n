@@ -13,18 +13,15 @@
  * permissions and limitations under the License.
  */
 
-#include "s2n_test.h"
-
-#include "testlib/s2n_testlib.h"
-
+#include <stdint.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
-#include <unistd.h>
 #include <time.h>
-#include <stdint.h>
+#include <unistd.h>
 
 #include "api/s2n.h"
-
+#include "s2n_test.h"
+#include "testlib/s2n_testlib.h"
 #include "tls/s2n_connection.h"
 #include "tls/s2n_handshake.h"
 
@@ -35,8 +32,8 @@ static const char *private_key_paths[SUPPORTED_CERTIFICATE_FORMATS] = { S2N_RSA_
 
 void mock_client(struct s2n_test_io_pair *io_pair)
 {
-    struct s2n_connection *conn;
-    struct s2n_config *config;
+    struct s2n_connection *conn = NULL;
+    struct s2n_config *config = NULL;
     s2n_blocked_status blocked;
 
     /* Give the server a chance to listen */
@@ -59,7 +56,7 @@ void mock_client(struct s2n_test_io_pair *io_pair)
         exit(1);
     }
 
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__OpenBSD__)
     /* On FreeBSD shutdown from one end of the socket pair does not give EPIPE. Must use close. */
     s2n_io_pair_close_one_end(io_pair, S2N_CLIENT);
 #else
@@ -85,17 +82,17 @@ void mock_client(struct s2n_test_io_pair *io_pair)
     sleep(1);
 
     s2n_io_pair_shutdown_one_end(io_pair, S2N_CLIENT, SHUT_WR);
+    s2n_io_pair_close_one_end(io_pair, S2N_CLIENT);
 
-    _exit(0);
+    exit(0);
 }
 
 int main(int argc, char **argv)
 {
-    struct s2n_connection *conn;
-    struct s2n_config *config;
+    struct s2n_connection *conn = NULL;
+    struct s2n_config *config = NULL;
     s2n_blocked_status blocked;
-    int status;
-    pid_t pid;
+    int status = 0;
     char cert_chain_pem[S2N_MAX_TEST_PEM_SIZE];
     char private_key_pem[S2N_MAX_TEST_PEM_SIZE];
     char dhparams_pem[S2N_MAX_TEST_PEM_SIZE];
@@ -106,11 +103,11 @@ int main(int argc, char **argv)
         struct s2n_cert_chain_and_key *chain_and_keys[SUPPORTED_CERTIFICATE_FORMATS];
 
         /* Create a pipe */
-        struct s2n_test_io_pair io_pair;
+        DEFER_CLEANUP(struct s2n_test_io_pair io_pair = { 0 }, s2n_io_pair_close);
         EXPECT_SUCCESS(s2n_io_pair_init(&io_pair));
 
         /* Create a child process */
-        pid = fork();
+        pid_t pid = fork();
         if (pid == 0) {
             /* This is the client process, close the server end of the pipe */
             EXPECT_SUCCESS(s2n_io_pair_close_one_end(&io_pair, S2N_SERVER));
@@ -125,7 +122,7 @@ int main(int argc, char **argv)
         EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
 
         EXPECT_NOT_NULL(config = s2n_config_new());
-        EXPECT_SUCCESS(s2n_config_set_cipher_preferences(config, "default"));
+        EXPECT_SUCCESS(s2n_config_set_cipher_preferences(config, "20240501"));
         for (int cert = 0; cert < SUPPORTED_CERTIFICATE_FORMATS; cert++) {
             EXPECT_SUCCESS(s2n_read_test_pem(certificate_paths[cert], cert_chain_pem, S2N_MAX_TEST_PEM_SIZE));
             EXPECT_SUCCESS(s2n_read_test_pem(private_key_paths[cert], private_key_pem, S2N_MAX_TEST_PEM_SIZE));

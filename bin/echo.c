@@ -13,40 +13,48 @@
  * permissions and limitations under the License.
  */
 
-#include <sys/ioctl.h>
-#include <poll.h>
-#include <netdb.h>
-
-#include <unistd.h>
 #include <errno.h>
-
-#include "api/s2n.h"
+#include <inttypes.h>
+#include <netdb.h>
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
+#include <poll.h>
+#include <sys/ioctl.h>
+#include <sys/param.h>
+#include <sys/select.h>
+#include <unistd.h>
 
-#include "crypto/s2n_pkey.h"
+#include "api/s2n.h"
+#include "api/unstable/fingerprint.h"
+#include "api/unstable/renegotiate.h"
 #include "common.h"
+#include "crypto/s2n_pkey.h"
 
-#define STDIO_BUFSIZE  10240
+#define STDIO_BUFSIZE 10240
 
-const char* sig_alg_strs[] = {
-    [S2N_TLS_SIGNATURE_ANONYMOUS]       = "None",
-    [S2N_TLS_SIGNATURE_RSA]             = "RSA",
-    [S2N_TLS_SIGNATURE_ECDSA]           = "ECDSA",
-    [S2N_TLS_SIGNATURE_RSA_PSS_RSAE]    = "RSA-PSS-RSAE",
-    [S2N_TLS_SIGNATURE_RSA_PSS_PSS]     = "RSA-PSS-PSS",
+const char *sig_alg_strs[] = {
+    [S2N_TLS_SIGNATURE_ANONYMOUS] = "None",
+    [S2N_TLS_SIGNATURE_RSA] = "RSA",
+    [S2N_TLS_SIGNATURE_ECDSA] = "ECDSA",
+    [S2N_TLS_SIGNATURE_RSA_PSS_RSAE] = "RSA-PSS-RSAE",
+    [S2N_TLS_SIGNATURE_RSA_PSS_PSS] = "RSA-PSS-PSS",
 };
 
-const char* sig_hash_strs[] = {
-    [S2N_TLS_HASH_NONE]                 = "None",
-    [S2N_TLS_HASH_MD5]                  = "MD5",
-    [S2N_TLS_HASH_SHA1]                 = "SHA1",
-    [S2N_TLS_HASH_SHA224]               = "SHA224",
-    [S2N_TLS_HASH_SHA256]               = "SHA256",
-    [S2N_TLS_HASH_SHA384]               = "SHA384",
-    [S2N_TLS_HASH_SHA512]               = "SHA512",
-    [S2N_TLS_HASH_MD5_SHA1]             = "MD5_SHA1",
+const char *sig_hash_strs[] = {
+    [S2N_TLS_HASH_NONE] = "None",
+    [S2N_TLS_HASH_MD5] = "MD5",
+    [S2N_TLS_HASH_SHA1] = "SHA1",
+    [S2N_TLS_HASH_SHA224] = "SHA224",
+    [S2N_TLS_HASH_SHA256] = "SHA256",
+    [S2N_TLS_HASH_SHA384] = "SHA384",
+    [S2N_TLS_HASH_SHA512] = "SHA512",
+    [S2N_TLS_HASH_MD5_SHA1] = "MD5_SHA1",
 };
+
+/* Careful: don't change this without updating the integration tests that check for it!
+ * Negative cases may stop working but not fail when this is updated.
+ */
+const char *pq_enabled_note = "PQ key exchange enabled";
 
 void print_s2n_error(const char *app_error)
 {
@@ -60,19 +68,19 @@ int wait_for_event(int fd, s2n_blocked_status blocked)
     struct pollfd reader = { .fd = fd, .events = 0 };
 
     switch (blocked) {
-    case S2N_NOT_BLOCKED:
-        return S2N_SUCCESS;
-    case S2N_BLOCKED_ON_READ:
-        reader.events |= POLLIN;
-        break;
-    case S2N_BLOCKED_ON_WRITE:
-        reader.events |= POLLOUT;
-        break;
-    case S2N_BLOCKED_ON_EARLY_DATA:
-    case S2N_BLOCKED_ON_APPLICATION_INPUT:
-        /* This case is not encountered by the s2nc/s2nd applications,
+        case S2N_NOT_BLOCKED:
+            return S2N_SUCCESS;
+        case S2N_BLOCKED_ON_READ:
+            reader.events |= POLLIN;
+            break;
+        case S2N_BLOCKED_ON_WRITE:
+            reader.events |= POLLOUT;
+            break;
+        case S2N_BLOCKED_ON_EARLY_DATA:
+        case S2N_BLOCKED_ON_APPLICATION_INPUT:
+            /* This case is not encountered by the s2nc/s2nd applications,
          * but is detected for completeness */
-        return S2N_SUCCESS;
+            return S2N_SUCCESS;
     }
 
     if (poll(&reader, 1, -1) < 0) {
@@ -95,12 +103,13 @@ int early_data_recv(struct s2n_connection *conn)
     ssize_t data_recv = 0;
     bool server_success = 0;
     s2n_blocked_status blocked = S2N_NOT_BLOCKED;
-    uint8_t *early_data_received = (uint8_t*)malloc(max_early_data_size);
+    uint8_t *early_data_received = (uint8_t *) malloc(max_early_data_size);
     GUARD_EXIT_NULL(early_data_received);
 
     do {
         server_success = (s2n_recv_early_data(conn, early_data_received + total_data_recv,
-                max_early_data_size - total_data_recv, &data_recv, &blocked) >= S2N_SUCCESS);
+                                  max_early_data_size - total_data_recv, &data_recv, &blocked)
+                >= S2N_SUCCESS);
         total_data_recv += data_recv;
     } while (!server_success);
 
@@ -125,7 +134,8 @@ int early_data_send(struct s2n_connection *conn, uint8_t *data, uint32_t len)
     bool client_success = 0;
     do {
         client_success = (s2n_send_early_data(conn, data + total_data_sent,
-                len - total_data_sent, &data_sent, &blocked) >= S2N_SUCCESS);
+                                  len - total_data_sent, &data_sent, &blocked)
+                >= S2N_SUCCESS);
         total_data_sent += data_sent;
     } while (total_data_sent < len && !client_success);
 
@@ -134,10 +144,10 @@ int early_data_send(struct s2n_connection *conn, uint8_t *data, uint32_t len)
 
 int print_connection_info(struct s2n_connection *conn)
 {
-    int client_hello_version;
-    int client_protocol_version;
-    int server_protocol_version;
-    int actual_protocol_version;
+    int client_hello_version = 0;
+    int client_protocol_version = 0;
+    int server_protocol_version = 0;
+    int actual_protocol_version = 0;
 
     if ((client_hello_version = s2n_connection_get_client_hello_version(conn)) < 0) {
         fprintf(stderr, "Could not get client hello version\n");
@@ -170,11 +180,23 @@ int print_connection_info(struct s2n_connection *conn)
         printf("Application protocol: %s\n", s2n_get_application_protocol(conn));
     }
 
-    printf("Curve: %s\n", s2n_connection_get_curve(conn));
-    printf("KEM: %s\n", s2n_connection_get_kem_name(conn));
-    printf("KEM Group: %s\n", s2n_connection_get_kem_group_name(conn));
+    const char *kem = s2n_connection_get_kem_name(conn);
+    if (strcmp(kem, "NONE") != 0) {
+        printf("Legacy TLS1.2 KEM: %s (%s, but the use of PQ key exchange with "
+               "TLS1.2 was experimental and is neither stable nor on a path to "
+               "standardization. The TLS1.3 version should be used instead: "
+               "https://aws.github.io/s2n-tls/usage-guide/ch15-post-quantum.html)\n",
+                kem, pq_enabled_note);
+    }
 
-    uint32_t length;
+    const char *kem_group = s2n_connection_get_kem_group_name(conn);
+    if (strcmp(kem_group, "NONE") != 0) {
+        printf("KEM Group: %s (%s)\n", kem_group, pq_enabled_note);
+    } else {
+        printf("Curve: %s\n", s2n_connection_get_curve(conn));
+    }
+
+    uint32_t length = 0;
     const uint8_t *status = s2n_connection_get_ocsp_response(conn, &length);
     if (status && length > 0) {
         printf("OCSP response received, length %u\n", length);
@@ -205,24 +227,49 @@ int print_connection_info(struct s2n_connection *conn)
     uint16_t identity_length = 0;
     GUARD_EXIT(s2n_connection_get_negotiated_psk_identity_length(conn, &identity_length), "Error getting negotiated psk identity length from the connection\n");
     if (identity_length != 0 && !session_resumed) {
-        uint8_t *identity = (uint8_t*)malloc(identity_length);
+        uint8_t *identity = (uint8_t *) malloc(identity_length);
         GUARD_EXIT_NULL(identity);
         GUARD_EXIT(s2n_connection_get_negotiated_psk_identity(conn, identity, identity_length), "Error getting negotiated psk identity from the connection\n");
-        printf("Negotiated PSK identity: %s\n", identity);
+        printf("Negotiated PSK identity: %.*s\n", identity_length, identity);
         free(identity);
     }
 
-    s2n_early_data_status_t early_data_status = (s2n_early_data_status_t)0;
+    s2n_early_data_status_t early_data_status = (s2n_early_data_status_t) 0;
     GUARD_EXIT(s2n_connection_get_early_data_status(conn, &early_data_status), "Error getting early data status");
     const char *status_str = NULL;
-    switch(early_data_status) {
-        case S2N_EARLY_DATA_STATUS_OK: status_str = "IN PROGRESS"; break;
-        case S2N_EARLY_DATA_STATUS_NOT_REQUESTED: status_str = "NOT REQUESTED"; break;
-        case S2N_EARLY_DATA_STATUS_REJECTED: status_str = "REJECTED"; break;
-        case S2N_EARLY_DATA_STATUS_END: status_str = "ACCEPTED"; break;
+    switch (early_data_status) {
+        case S2N_EARLY_DATA_STATUS_OK:
+            status_str = "IN PROGRESS";
+            break;
+        case S2N_EARLY_DATA_STATUS_NOT_REQUESTED:
+            status_str = "NOT REQUESTED";
+            break;
+        case S2N_EARLY_DATA_STATUS_REJECTED:
+            status_str = "REJECTED";
+            break;
+        case S2N_EARLY_DATA_STATUS_END:
+            status_str = "ACCEPTED";
+            break;
     }
     GUARD_EXIT_NULL(status_str);
     printf("Early Data status: %s\n", status_str);
+
+    struct s2n_client_hello *ch = s2n_connection_get_client_hello(conn);
+    if (ch && client_hello_version > S2N_SSLv2) {
+        uint8_t ja3[16] = { 0 };
+        uint32_t ja3_size = 0, str_size = 0;
+        GUARD_EXIT(s2n_client_hello_get_fingerprint_hash(ch, S2N_FINGERPRINT_JA3,
+                           sizeof(ja3), ja3, &ja3_size, &str_size),
+                "Error calculating JA3");
+        printf("JA3: ");
+        for (size_t i = 0; i < ja3_size; i++) {
+            printf("%02x", ja3[i]);
+        }
+        printf("\n");
+    }
+
+    printf("Wire bytes in: %" PRIu64 "\n", s2n_connection_get_wire_bytes_in(conn));
+    printf("Wire bytes out: %" PRIu64 "\n", s2n_connection_get_wire_bytes_out(conn));
 
     return 0;
 }
@@ -235,8 +282,10 @@ int negotiate(struct s2n_connection *conn, int fd)
             fprintf(stderr, "Failed to negotiate: '%s'. %s\n",
                     s2n_strerror(s2n_errno, "EN"),
                     s2n_strerror_debug(s2n_errno, "EN"));
-            fprintf(stderr, "Alert: %d\n",
-                    s2n_connection_get_alert(conn));
+            if (s2n_error_get_type(s2n_errno) == S2N_ERR_T_ALERT) {
+                fprintf(stderr, "Alert: %d\n",
+                        s2n_connection_get_alert(conn));
+            }
             S2N_ERROR_PRESERVE_ERRNO();
         }
 
@@ -249,6 +298,75 @@ int negotiate(struct s2n_connection *conn, int fd)
 
     printf("s2n is ready\n");
     return 0;
+}
+
+int renegotiate(struct s2n_connection *conn, int fd, bool wait_for_more_data)
+{
+    s2n_blocked_status blocked = S2N_NOT_BLOCKED;
+    uint8_t buffer[STDIO_BUFSIZE] = { 0 };
+    ssize_t data_read = 0;
+
+    GUARD_RETURN(s2n_renegotiate_wipe(conn), "Unable to prepare connection for renegotiate");
+    GUARD_RETURN(s2n_connection_set_client_auth_type(conn, S2N_CERT_AUTH_OPTIONAL), "Error setting ClientAuth optional");
+
+    fprintf(stdout, "RENEGOTIATE\n");
+    fflush(stdout);
+
+    /* Do not proceed with renegotiation until we receive more data from the server */
+    if (wait_for_more_data) {
+        fd_set fds = { 0 };
+        FD_SET(fd, &fds);
+        select(FD_SETSIZE, &fds, NULL, NULL, NULL);
+    }
+
+    while (s2n_renegotiate(conn, buffer, sizeof(buffer), &data_read, &blocked) != S2N_SUCCESS) {
+        uint8_t *data_ptr = buffer;
+        while (data_read > 0) {
+            ssize_t data_written = write(STDOUT_FILENO, data_ptr, data_read);
+            GUARD_RETURN(data_written, "Error writing to stdout\n");
+            data_read -= data_written;
+            data_ptr += data_written;
+        }
+
+        if (s2n_error_get_type(s2n_errno) != S2N_ERR_T_BLOCKED) {
+            fprintf(stderr, "Failed to renegotiate: '%s'. %s\n", s2n_strerror(s2n_errno, NULL),
+                    s2n_strerror_debug(s2n_errno, NULL));
+            if (s2n_error_get_type(s2n_errno) == S2N_ERR_T_ALERT) {
+                fprintf(stderr, "Alert: %d\n", s2n_connection_get_alert(conn));
+            }
+            return S2N_FAILURE;
+        }
+
+        GUARD_RETURN(wait_for_event(fd, blocked), "Error polling IO for renegotiate");
+    }
+
+    print_connection_info(conn);
+    printf("s2n is ready, again\n");
+    return S2N_SUCCESS;
+}
+
+void send_data(struct s2n_connection *conn, int sockfd, const char *data, uint64_t len, s2n_blocked_status *blocked)
+{
+    uint64_t bytes_remaining = len;
+    const char *data_ptr = data;
+    do {
+        ssize_t send_len = MIN(bytes_remaining, SSIZE_MAX);
+        ssize_t bytes_written = s2n_send(conn, data_ptr, send_len, blocked);
+        if (bytes_written < 0) {
+            if (s2n_error_get_type(s2n_errno) != S2N_ERR_T_BLOCKED) {
+                fprintf(stderr, "Error writing to connection: '%s'\n",
+                        s2n_strerror(s2n_errno, "EN"));
+                exit(1);
+            }
+
+            GUARD_EXIT(wait_for_event(sockfd, *blocked), "Unable to send data");
+            continue;
+        }
+
+        bytes_remaining -= bytes_written;
+        data_ptr += bytes_written;
+
+    } while (bytes_remaining > 0);
 }
 
 int echo(struct s2n_connection *conn, int sockfd, bool *stop_echo)
@@ -265,14 +383,13 @@ int echo(struct s2n_connection *conn, int sockfd, bool *stop_echo)
 
     /* Act as a simple proxy between stdin and the SSL connection */
     int p = 0;
-    s2n_blocked_status blocked;
+    s2n_blocked_status blocked = S2N_NOT_BLOCKED;
     do {
         /* echo will send and receive Application Data back and forth between
-         * client and server, until stop_echo is true. */
+         * client and server, until stop_echo is true or stdin EOF is reached. */
         while (!(*stop_echo) && (p = poll(readers, 2, -1)) > 0) {
             char buffer[STDIO_BUFSIZE];
             ssize_t bytes_read = 0;
-            ssize_t bytes_written = 0;
 
             if (readers[0].revents & POLLIN) {
                 s2n_errno = S2N_ERR_T_OK;
@@ -281,18 +398,23 @@ int echo(struct s2n_connection *conn, int sockfd, bool *stop_echo)
                     return 0;
                 }
                 if (bytes_read < 0) {
-                    if (s2n_error_get_type(s2n_errno) == S2N_ERR_T_BLOCKED) {
-                        /* Wait until poll tells us data is ready */
-                        continue;
+                    switch (s2n_error_get_type(s2n_errno)) {
+                        case S2N_ERR_T_BLOCKED:
+                            /* Wait until poll tells us data is ready */
+                            continue;
+                        case S2N_ERR_T_ALERT:
+                            fprintf(stderr, "Received alert: %d\n", s2n_connection_get_alert(conn));
+                            break;
+                        default:
+                            fprintf(stderr, "Error reading from connection: '%s'\n", s2n_strerror(s2n_errno, "EN"));
+                            break;
                     }
-
-                    fprintf(stderr, "Error reading from connection: '%s' %d\n", s2n_strerror(s2n_errno, "EN"), s2n_connection_get_alert(conn));
                     exit(1);
                 }
 
                 char *buf_ptr = buffer;
                 do {
-                    bytes_written = write(STDOUT_FILENO, buf_ptr, bytes_read);
+                    ssize_t bytes_written = write(STDOUT_FILENO, buf_ptr, bytes_read);
                     if (bytes_written < 0) {
                         fprintf(stderr, "Error writing to stdout\n");
                         exit(1);
@@ -319,7 +441,7 @@ int echo(struct s2n_connection *conn, int sockfd, bool *stop_echo)
                     }
 
                     bytes_read = read(STDIN_FILENO, buffer, bytes_to_read);
-                    if (bytes_read < 0 && errno != EINTR){
+                    if (bytes_read < 0 && errno != EINTR) {
                         fprintf(stderr, "Error reading from stdin\n");
                         exit(1);
                     }
@@ -331,29 +453,9 @@ int echo(struct s2n_connection *conn, int sockfd, bool *stop_echo)
 
                     /* We may not be able to write all the data we read in one shot, so
                      * keep sending until we have cleared our buffer. */
-                    char *buf_ptr = buffer;
-                    do {
-                        s2n_errno = S2N_ERR_T_OK;
-                        bytes_written = s2n_send(conn, buf_ptr, bytes_read, &blocked);
-                        if (bytes_written < 0) {
-                            if (s2n_error_get_type(s2n_errno) != S2N_ERR_T_BLOCKED) {
-                                fprintf(stderr, "Error writing to connection: '%s'\n",
-                                        s2n_strerror(s2n_errno, "EN"));
-                                exit(1);
-                            }
-
-                            if (wait_for_event(sockfd, blocked) != S2N_SUCCESS) {
-                                S2N_ERROR_PRESERVE_ERRNO();
-                            }
-                        } else {
-                            // Only modify the counts if we successfully wrote the data
-                            bytes_read -= bytes_written;
-                            buf_ptr += bytes_written;
-                        }
-                    } while (bytes_read > 0);
+                    send_data(conn, sockfd, buffer, bytes_read, &blocked);
 
                 } while (bytes_available || blocked);
-
             }
 
             if (readers[1].revents & POLLHUP) {
@@ -363,16 +465,16 @@ int echo(struct s2n_connection *conn, int sockfd, bool *stop_echo)
 
             if (readers[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
                 fprintf(stderr, "Error polling from socket: err=%d hup=%d nval=%d\n",
-                        (readers[0].revents & POLLERR ) ? 1 : 0,
-                        (readers[0].revents & POLLHUP ) ? 1 : 0,
-                        (readers[0].revents & POLLNVAL ) ? 1 : 0);
+                        (readers[0].revents & POLLERR) ? 1 : 0,
+                        (readers[0].revents & POLLHUP) ? 1 : 0,
+                        (readers[0].revents & POLLNVAL) ? 1 : 0);
                 POSIX_BAIL(S2N_ERR_POLLING_FROM_SOCKET);
             }
 
             if (readers[1].revents & (POLLERR | POLLNVAL)) {
                 fprintf(stderr, "Error polling from socket: err=%d nval=%d\n",
-                        (readers[1].revents & POLLERR ) ? 1 : 0,
-                        (readers[1].revents & POLLNVAL ) ? 1 : 0);
+                        (readers[1].revents & POLLERR) ? 1 : 0,
+                        (readers[1].revents & POLLNVAL) ? 1 : 0);
                 POSIX_BAIL(S2N_ERR_POLLING_FROM_SOCKET);
             }
         }

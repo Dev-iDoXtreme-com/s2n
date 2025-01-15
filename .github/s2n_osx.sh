@@ -16,6 +16,7 @@
 set -eu
 source codebuild/bin/s2n_setup_env.sh
 
+export CTEST_OUTPUT_ON_FAILURE=1
 BREWINSTLLPATH=$(brew --prefix openssl@1.1)
 OPENSSL_1_1_1_INSTALL_DIR="${BREWINSTLLPATH:-"/usr/local/Cellar/openssl@1.1/1.1.1?"}"
 
@@ -24,6 +25,15 @@ echo "Using OpenSSL at $OPENSSL_1_1_1_INSTALL_DIR"
 cmake . -Bbuild -GNinja \
 -DCMAKE_BUILD_TYPE=Debug \
 -DCMAKE_PREFIX_PATH=${OPENSSL_1_1_1_INSTALL_DIR} ..
+
+cmake --build ./build -j $(nproc)
+time CTEST_PARALLEL_LEVEL=$(nproc) ninja -C build test
+
+# Build shared library
+cmake . -Bbuild -GNinja \
+-DCMAKE_BUILD_TYPE=Debug \
+-DCMAKE_PREFIX_PATH=${OPENSSL_1_1_1_INSTALL_DIR} .. \
+-DBUILD_SHARED_LIBS=ON
 
 cmake --build ./build -j $(nproc)
 time CTEST_PARALLEL_LEVEL=$(nproc) ninja -C build test

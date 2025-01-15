@@ -22,7 +22,7 @@ source codebuild/bin/s2n_set_build_preset.sh
 : "${BUILD_S2N:=false}"
 : "${GCC_VERSION:=NONE}"
 : "${LATEST_CLANG:=false}"
-: "${TESTS:=integration}"
+: "${TESTS:=unit}"
 : "${S2N_COVERAGE:=false}"
 : "${LD_LIBRARY_PATH:=NONE}"
 
@@ -31,7 +31,6 @@ source codebuild/bin/s2n_set_build_preset.sh
 : "${BASE_S2N_DIR:=$(pwd)}"
 : "${TEST_DEPS_DIR:=$BASE_S2N_DIR/test-deps}"
 : "${PYTHON_INSTALL_DIR:=$TEST_DEPS_DIR/python}"
-: "${GNUTLS_INSTALL_DIR:=$TEST_DEPS_DIR/gnutls}"
 : "${GNUTLS37_INSTALL_DIR:=$TEST_DEPS_DIR/gnutls37}"
 : "${PRLIMIT_INSTALL_DIR:=$TEST_DEPS_DIR/prlimit}"
 : "${SAW_INSTALL_DIR:=$TEST_DEPS_DIR/saw}"
@@ -39,20 +38,20 @@ source codebuild/bin/s2n_set_build_preset.sh
 : "${LIBFUZZER_INSTALL_DIR:=$TEST_DEPS_DIR/libfuzzer}"
 : "${LATEST_CLANG_INSTALL_DIR:=$TEST_DEPS_DIR/clang}"
 : "${SCAN_BUILD_INSTALL_DIR:=$TEST_DEPS_DIR/scan-build}"
-: "${OPENSSL_0_9_8_INSTALL_DIR:=$TEST_DEPS_DIR/openssl-0.9.8}"
 : "${OPENSSL_1_1_1_INSTALL_DIR:=$TEST_DEPS_DIR/openssl-1.1.1}"
 : "${OPENSSL_3_0_INSTALL_DIR:=$TEST_DEPS_DIR/openssl-3.0}"
 : "${OPENSSL_1_0_2_INSTALL_DIR:=$TEST_DEPS_DIR/openssl-1.0.2}"
 : "${OQS_OPENSSL_1_1_1_INSTALL_DIR:=$TEST_DEPS_DIR/oqs_openssl-1.1.1}"
-: "${OPENSSL_1_0_2_FIPS_INSTALL_DIR:=$TEST_DEPS_DIR/openssl-1.0.2-fips}"
 : "${BORINGSSL_INSTALL_DIR:=$TEST_DEPS_DIR/boringssl}"
 : "${AWSLC_INSTALL_DIR:=$TEST_DEPS_DIR/awslc}"
 : "${AWSLC_FIPS_INSTALL_DIR:=$TEST_DEPS_DIR/awslc-fips}"
-: "${LIBRESSL_INSTALL_DIR:=$TEST_DEPS_DIR/libressl-3.4.3}"
+: "${AWSLC_FIPS_2022_INSTALL_DIR:=$TEST_DEPS_DIR/awslc-fips-2022}"
+: "${LIBRESSL_INSTALL_DIR:=$TEST_DEPS_DIR/libressl}"
 : "${CPPCHECK_INSTALL_DIR:=$TEST_DEPS_DIR/cppcheck}"
 : "${CTVERIF_INSTALL_DIR:=$TEST_DEPS_DIR/ctverif}"
 : "${SIDETRAIL_INSTALL_DIR:=$TEST_DEPS_DIR/sidetrail}"
 : "${GB_INSTALL_DIR:=$TEST_DEPS_DIR/gb}"
+: "${APACHE2_INSTALL_DIR:=$TEST_DEPS_DIR/apache2}"
 : "${FUZZ_TIMEOUT_SEC:=10}"
 
 # Set some environment vars for OS, Distro and architecture.
@@ -87,8 +86,8 @@ export GCC_VERSION
 export LATEST_CLANG
 export TESTS
 export BASE_S2N_DIR
+export TEST_DEPS_DIR
 export PYTHON_INSTALL_DIR
-export GNUTLS_INSTALL_DIR
 export GNUTLS37_INSTALL_DIR
 export PRLIMIT_INSTALL_DIR
 export SAW_INSTALL_DIR
@@ -96,14 +95,14 @@ export Z3_INSTALL_DIR
 export LIBFUZZER_INSTALL_DIR
 export LATEST_CLANG_INSTALL_DIR
 export SCAN_BUILD_INSTALL_DIR
-export OPENSSL_0_9_8_INSTALL_DIR
 export OPENSSL_1_1_1_INSTALL_DIR
 export OPENSSL_3_0_INSTALL_DIR
 export OPENSSL_1_0_2_INSTALL_DIR
-export OPENSSL_1_0_2_FIPS_INSTALL_DIR
 export OQS_OPENSSL_1_1_1_INSTALL_DIR
 export BORINGSSL_INSTALL_DIR
 export AWSLC_INSTALL_DIR
+export AWSLC_FIPS_INSTALL_DIR
+export AWSLC_FIPS_2022_INSTALL_DIR
 export LIBRESSL_INSTALL_DIR
 export CPPCHECK_INSTALL_DIR
 export CTVERIF_INSTALL_DIR
@@ -113,7 +112,8 @@ export FUZZ_TIMEOUT_SEC
 export GB_INSTALL_DIR
 export OS_NAME
 export S2N_CORKED_IO
-export S2N_NO_PQ
+# For use by criterion/ci run reports
+export AWS_S3_URL="s3://s2n-tls-logs/release/"
 
 # S2N_COVERAGE should not be used with fuzz tests, use FUZZ_COVERAGE instead
 if [[ "$S2N_COVERAGE" == "true" && "$TESTS" == "fuzz" ]]; then
@@ -126,31 +126,25 @@ if [[ -z $S2N_LIBCRYPTO ]]; then export LIBCRYPTO_ROOT=$OPENSSL_1_1_1_INSTALL_DI
 if [[ "$S2N_LIBCRYPTO" == "openssl-1.1.1" ]]; then export LIBCRYPTO_ROOT=$OPENSSL_1_1_1_INSTALL_DIR ; fi
 if [[ "$S2N_LIBCRYPTO" == "openssl-3.0" ]]; then export LIBCRYPTO_ROOT=$OPENSSL_3_0_INSTALL_DIR ; fi
 if [[ "$S2N_LIBCRYPTO" == "openssl-1.0.2" ]]; then export LIBCRYPTO_ROOT=$OPENSSL_1_0_2_INSTALL_DIR ; fi
-if [[ "$S2N_LIBCRYPTO" == "openssl-1.0.2-fips" ]]; then
-    export LIBCRYPTO_ROOT=$OPENSSL_1_0_2_FIPS_INSTALL_DIR ;
-    export S2N_TEST_IN_FIPS_MODE=1 ;
-fi
 if [[ "$S2N_LIBCRYPTO" == "boringssl" ]]; then export LIBCRYPTO_ROOT=$BORINGSSL_INSTALL_DIR ; fi
-
 if [[ "$S2N_LIBCRYPTO" == "awslc" ]]; then export LIBCRYPTO_ROOT=$AWSLC_INSTALL_DIR ; fi
-if [[ "$S2N_LIBCRYPTO" == "awslc-fips" ]]; then
-  export LIBCRYPTO_ROOT=$AWSLC_FIPS_INSTALL_DIR ;
-  export S2N_TEST_IN_FIPS_MODE=1 ;
-fi
-
+if [[ "$S2N_LIBCRYPTO" == "awslc-fips" ]]; then export LIBCRYPTO_ROOT=$AWSLC_FIPS_INSTALL_DIR ; fi
+if [[ "$S2N_LIBCRYPTO" == "awslc-fips-2022" ]]; then export LIBCRYPTO_ROOT=$AWSLC_FIPS_2022_INSTALL_DIR ; fi
 if [[ "$S2N_LIBCRYPTO" == "libressl" ]]; then export LIBCRYPTO_ROOT=$LIBRESSL_INSTALL_DIR ; fi
 
-# Create a link to the selected libcrypto. This shouldn't be needed when LIBCRYPTO_ROOT is set, but some tests
-# have the "libcrypto-root" directory path hardcoded.
-rm -rf libcrypto-root && ln -s "$LIBCRYPTO_ROOT" libcrypto-root
+if [[ -n "${LIBCRYPTO_ROOT:-}" ]]; then
+  # Create a link to the selected libcrypto. This shouldn't be needed when LIBCRYPTO_ROOT is set, but some tests
+  # have the "libcrypto-root" directory path hardcoded.
+  rm -rf libcrypto-root && ln -s "$LIBCRYPTO_ROOT" libcrypto-root
+fi
 
 # Set the libfuzzer to use for fuzz tests
 export LIBFUZZER_ROOT=$LIBFUZZER_INSTALL_DIR
 
 #check if the path contains test dep X, if not and X exists, add to path
-path_overrides="$PYTHON_INSTALL_DIR/bin
+path_overrides="$AWSLC_INSTALL_DIR/bin
+$PYTHON_INSTALL_DIR/bin
 $OPENSSL_1_1_1_INSTALL_DIR/bin
-$GNUTLS_INSTALL_DIR/bin
 $SAW_INSTALL_DIR/bin
 $Z3_INSTALL_DIR/bin
 $SCAN_BUILD_INSTALL_DIR/bin
@@ -208,11 +202,10 @@ set_cc
 echo "UID=$UID"
 echo "OS_NAME=$OS_NAME"
 echo "S2N_LIBCRYPTO=$S2N_LIBCRYPTO"
-echo "LIBCRYPTO_ROOT=$LIBCRYPTO_ROOT"
+echo "LIBCRYPTO_ROOT=${LIBCRYPTO_ROOT:-}"
 echo "BUILD_S2N=$BUILD_S2N"
 echo "GCC_VERSION=$GCC_VERSION"
 echo "LATEST_CLANG=$LATEST_CLANG"
 echo "TESTS=$TESTS"
 echo "PATH=$PATH"
 echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
-

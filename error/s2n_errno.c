@@ -13,23 +13,24 @@
  * permissions and limitations under the License.
  */
 
+#include "error/s2n_errno.h"
+
 #include <errno.h>
-#include <strings.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "error/s2n_errno.h"
+#include <strings.h>
 
 #include "api/s2n.h"
 #include "utils/s2n_map.h"
 #include "utils/s2n_safety.h"
 
 #ifdef S2N_STACKTRACE
-#   include <execinfo.h>
+    #include <execinfo.h>
 #endif
 
 __thread int s2n_errno;
-__thread const char *s2n_debug_str;
+__thread struct s2n_debug_info _s2n_debug_info = { .debug_str = "", .source = "" };
 
 /**
  * Returns the address of the thread-local `s2n_errno` variable
@@ -79,6 +80,7 @@ static const char *no_such_error = "Internal s2n error";
     ERR_ENTRY(S2N_ERR_DECODE_PRIVATE_KEY, "error decoding private key") \
     ERR_ENTRY(S2N_ERR_INVALID_SIGNATURE_ALGORITHM, "Invalid signature algorithm") \
     ERR_ENTRY(S2N_ERR_INVALID_SIGNATURE_SCHEME, "Invalid signature scheme") \
+    ERR_ENTRY(S2N_ERR_NO_VALID_SIGNATURE_SCHEME, "Unable to negotiate a supported signature scheme") \
     ERR_ENTRY(S2N_ERR_CBC_VERIFY, "Failed CBC verification") \
     ERR_ENTRY(S2N_ERR_DH_COPYING_PUBLIC_KEY, "error copying Diffie-Hellman public key") \
     ERR_ENTRY(S2N_ERR_SIGN, "error signing data") \
@@ -86,6 +88,8 @@ static const char *no_such_error = "Internal s2n error";
     ERR_ENTRY(S2N_ERR_ECDHE_GEN_KEY, "Failed to generate an ECDHE key") \
     ERR_ENTRY(S2N_ERR_ECDHE_SHARED_SECRET, "Error computing ECDHE shared secret") \
     ERR_ENTRY(S2N_ERR_ECDHE_UNSUPPORTED_CURVE, "Unsupported EC curve was presented during an ECDHE handshake") \
+    ERR_ENTRY(S2N_ERR_ECDHE_INVALID_PUBLIC_KEY, "Failed to validate the peer's point on the elliptic curve") \
+    ERR_ENTRY(S2N_ERR_ECDHE_INVALID_PUBLIC_KEY_FIPS, "Failed to validate the peer's point on the elliptic curve, per FIPS requirements") \
     ERR_ENTRY(S2N_ERR_ECDSA_UNSUPPORTED_CURVE, "Unsupported EC curve was presented during an ECDSA SignatureScheme handshake") \
     ERR_ENTRY(S2N_ERR_ECDHE_SERIALIZING, "Error serializing ECDHE public") \
     ERR_ENTRY(S2N_ERR_KEM_UNSUPPORTED_PARAMS, "Unsupported KEM params was presented during a handshake that uses a KEM") \
@@ -95,10 +99,21 @@ static const char *no_such_error = "Internal s2n error";
     ERR_ENTRY(S2N_ERR_RECORD_LIMIT, "TLS record limit reached") \
     ERR_ENTRY(S2N_ERR_CERT_UNTRUSTED, "Certificate is untrusted") \
     ERR_ENTRY(S2N_ERR_CERT_REVOKED, "Certificate has been revoked by the CA") \
+    ERR_ENTRY(S2N_ERR_CERT_NOT_YET_VALID, "Certificate is not yet valid") \
     ERR_ENTRY(S2N_ERR_CERT_EXPIRED, "Certificate has expired") \
     ERR_ENTRY(S2N_ERR_CERT_TYPE_UNSUPPORTED, "Certificate Type is unsupported") \
     ERR_ENTRY(S2N_ERR_CERT_INVALID, "Certificate is invalid") \
     ERR_ENTRY(S2N_ERR_CERT_MAX_CHAIN_DEPTH_EXCEEDED, "The maximum certificate chain depth has been exceeded") \
+    ERR_ENTRY(S2N_ERR_CERT_REJECTED, "Certificate failed custom application validation") \
+    ERR_ENTRY(S2N_ERR_SECURITY_POLICY_INCOMPATIBLE_CERT, "Incompatibility found between loaded certificates and chosen security policy") \
+    ERR_ENTRY(S2N_ERR_CRL_LOOKUP_FAILED, "No CRL could be found for the corresponding certificate") \
+    ERR_ENTRY(S2N_ERR_CRL_SIGNATURE, "The signature of the CRL is invalid") \
+    ERR_ENTRY(S2N_ERR_CRL_ISSUER, "Unable to get the CRL issuer certificate") \
+    ERR_ENTRY(S2N_ERR_CRL_UNHANDLED_CRITICAL_EXTENSION, "Unhandled critical CRL extension") \
+    ERR_ENTRY(S2N_ERR_CRL_INVALID_THIS_UPDATE, "The CRL contains an invalid thisUpdate field") \
+    ERR_ENTRY(S2N_ERR_CRL_INVALID_NEXT_UPDATE, "The CRL contains an invalid nextUpdate field") \
+    ERR_ENTRY(S2N_ERR_CRL_NOT_YET_VALID, "The CRL is not yet valid") \
+    ERR_ENTRY(S2N_ERR_CRL_EXPIRED, "The CRL has expired") \
     ERR_ENTRY(S2N_ERR_INVALID_MAX_FRAG_LEN, "invalid Maximum Fragmentation Length encountered") \
     ERR_ENTRY(S2N_ERR_MAX_FRAG_LEN_MISMATCH, "Negotiated Maximum Fragmentation Length from server does not match the requested length by client") \
     ERR_ENTRY(S2N_ERR_PROTOCOL_VERSION_UNSUPPORTED, "TLS protocol version is not supported by configuration") \
@@ -129,6 +144,7 @@ static const char *no_such_error = "Internal s2n error";
     ERR_ENTRY(S2N_ERR_HASH_INVALID_ALGORITHM, "invalid hash algorithm") \
     ERR_ENTRY(S2N_ERR_PRF_INVALID_ALGORITHM, "invalid prf hash algorithm") \
     ERR_ENTRY(S2N_ERR_PRF_INVALID_SEED, "invalid prf seeds provided") \
+    ERR_ENTRY(S2N_ERR_PRF_DERIVE, "error deriving a secret from the PRF") \
     ERR_ENTRY(S2N_ERR_P_HASH_INVALID_ALGORITHM, "invalid p_hash algorithm") \
     ERR_ENTRY(S2N_ERR_P_HASH_INIT_FAILED, "error initializing p_hash") \
     ERR_ENTRY(S2N_ERR_P_HASH_UPDATE_FAILED, "error updating p_hash") \
@@ -136,6 +152,7 @@ static const char *no_such_error = "Internal s2n error";
     ERR_ENTRY(S2N_ERR_P_HASH_WIPE_FAILED, "error wiping p_hash") \
     ERR_ENTRY(S2N_ERR_HMAC_INVALID_ALGORITHM, "invalid HMAC algorithm") \
     ERR_ENTRY(S2N_ERR_HKDF_OUTPUT_SIZE, "invalid HKDF output size") \
+    ERR_ENTRY(S2N_ERR_HKDF, "error generating HKDF output") \
     ERR_ENTRY(S2N_ERR_ALERT_PRESENT, "TLS alert is already pending") \
     ERR_ENTRY(S2N_ERR_HANDSHAKE_STATE, "Invalid handshake state encountered") \
     ERR_ENTRY(S2N_ERR_SHUTDOWN_PAUSED, "s2n_shutdown() called while paused") \
@@ -174,7 +191,6 @@ static const char *no_such_error = "Internal s2n error";
     ERR_ENTRY(S2N_ERR_ARRAY_INDEX_OOB, "Array index out of bounds") \
     ERR_ENTRY(S2N_ERR_FREE_STATIC_BLOB, "Cannot free a static blob") \
     ERR_ENTRY(S2N_ERR_RESIZE_STATIC_BLOB, "Cannot resize a static blob") \
-    ERR_ENTRY(S2N_ERR_NO_SUPPORTED_LIBCRYPTO_API, "libcrypto does not support this API") \
     ERR_ENTRY(S2N_ERR_RECORD_LENGTH_TOO_LARGE, "Record length exceeds protocol version maximum") \
     ERR_ENTRY(S2N_ERR_SET_DUPLICATE_VALUE, "Set already contains the provided value") \
     ERR_ENTRY(S2N_ERR_ASYNC_CALLBACK_FAILED, "Callback associated with async private keys function has failed") \
@@ -184,7 +200,7 @@ static const char *no_such_error = "Internal s2n error";
     ERR_ENTRY(S2N_ERR_CLIENT_MODE, "Operation not allowed in client mode") \
     ERR_ENTRY(S2N_ERR_CLIENT_MODE_DISABLED, "client connections not allowed") \
     ERR_ENTRY(S2N_ERR_TOO_MANY_CERTIFICATES, "only 1 certificate is supported in client mode") \
-    ERR_ENTRY(S2N_ERR_TOO_MANY_SIGNATURE_SCHEMES, "Max supported length of SignatureAlgorithms/SignatureSchemes list is 32") \
+    ERR_ENTRY(S2N_ERR_TOO_MANY_SIGNATURE_SCHEMES, "Max supported length of SignatureAlgorithms/SignatureSchemes list is 128") \
     ERR_ENTRY(S2N_ERR_CLIENT_AUTH_NOT_SUPPORTED_IN_FIPS_MODE, "Client Auth is not supported when in FIPS mode") \
     ERR_ENTRY(S2N_ERR_INVALID_BASE64, "invalid base64 encountered") \
     ERR_ENTRY(S2N_ERR_INVALID_HEX, "invalid HEX encountered") \
@@ -203,6 +219,7 @@ static const char *no_such_error = "Internal s2n error";
     ERR_ENTRY(S2N_ERR_SEND_SIZE, "Retried s2n_send() size is invalid") \
     ERR_ENTRY(S2N_ERR_CORK_SET_ON_UNMANAGED, "Attempt to set connection cork management on unmanaged IO") \
     ERR_ENTRY(S2N_ERR_UNRECOGNIZED_EXTENSION, "TLS extension not recognized") \
+    ERR_ENTRY(S2N_ERR_EXTENSION_NOT_RECEIVED, "The TLS extension was not received") \
     ERR_ENTRY(S2N_ERR_INVALID_SCT_LIST, "SCT list is invalid") \
     ERR_ENTRY(S2N_ERR_INVALID_OCSP_RESPONSE, "OCSP response is invalid") \
     ERR_ENTRY(S2N_ERR_UPDATING_EXTENSION, "Updating extension data failed") \
@@ -228,7 +245,7 @@ static const char *no_such_error = "Internal s2n error";
     ERR_ENTRY(S2N_ERR_SESSION_TICKET_NOT_SUPPORTED, "Session ticket not supported for this connection") \
     ERR_ENTRY(S2N_ERR_OCSP_NOT_SUPPORTED, "OCSP stapling was requested, but is not supported") \
     ERR_ENTRY(S2N_ERR_INVALID_SIGNATURE_ALGORITHMS_PREFERENCES, "Invalid signature algorithms preferences version") \
-    ERR_ENTRY(S2N_RSA_PSS_NOT_SUPPORTED, "RSA-PSS signing not supported by underlying libcrypto implementation") \
+    ERR_ENTRY(S2N_ERR_RSA_PSS_NOT_SUPPORTED, "RSA-PSS signing not supported by underlying libcrypto implementation") \
     ERR_ENTRY(S2N_ERR_MAX_INNER_PLAINTEXT_SIZE, "Inner plaintext size exceeds limit") \
     ERR_ENTRY(S2N_ERR_INVALID_ECC_PREFERENCES, "Invalid ecc curves preferences version") \
     ERR_ENTRY(S2N_ERR_RECORD_STUFFER_SIZE, "Record stuffer out of space") \
@@ -249,7 +266,6 @@ static const char *no_such_error = "Internal s2n error";
     ERR_ENTRY(S2N_ERR_INVALID_STATE, "Invalid state, this is the result of invalid use of an API. Check the API documentation for the function that raised this error for more info") \
     ERR_ENTRY(S2N_ERR_UNSUPPORTED_WITH_QUIC, "Functionality not supported when running with QUIC support enabled") \
     ERR_ENTRY(S2N_ERR_PQ_CRYPTO, "An error occurred in a post-quantum crypto function") \
-    ERR_ENTRY(S2N_ERR_PQ_DISABLED, "Post-quantum crypto is disabled") \
     ERR_ENTRY(S2N_ERR_DUPLICATE_PSK_IDENTITIES, "The list of pre-shared keys provided contains duplicate psk identities") \
     ERR_ENTRY(S2N_ERR_OFFERED_PSKS_TOO_LONG, "The total pre-shared key data is too long to send over the wire") \
     ERR_ENTRY(S2N_ERR_INVALID_SESSION_TICKET, "Session ticket data is not valid") \
@@ -274,13 +290,39 @@ static const char *no_such_error = "Internal s2n error";
     ERR_ENTRY(S2N_ERR_SECRET_SCHEDULE_STATE, "Correct inputs to secret calculation not available") \
     ERR_ENTRY(S2N_ERR_LIBCRYPTO_VERSION_NUMBER_MISMATCH, "The libcrypto major version number seen at compile-time is different from the major version number seen at run-time") \
     ERR_ENTRY(S2N_ERR_LIBCRYPTO_VERSION_NAME_MISMATCH, "The libcrypto major version name seen at compile-time is different from the major version name seen at run-time") \
-    ERR_ENTRY(S2N_ERR_OSSL_LOAD_PROVIDER, "Failed to load an openssl provider") \
+    ERR_ENTRY(S2N_ERR_OSSL_PROVIDER, "Failed to load or unload an openssl provider") \
     ERR_ENTRY(S2N_ERR_CERT_OWNERSHIP, "The ownership of the certificate chain is incompatible with the operation") \
-    ERR_ENTRY(S2N_ERR_INTERNAL_LIBCRYPTO_ERROR, "An internal error has occurred in the libcrypto API")
-/* clang-format on */
+    ERR_ENTRY(S2N_ERR_INTERNAL_LIBCRYPTO_ERROR, "An internal error has occurred in the libcrypto API") \
+    ERR_ENTRY(S2N_ERR_NO_RENEGOTIATION, "Only secure, server-initiated renegotiation is supported") \
+    ERR_ENTRY(S2N_ERR_APP_DATA_BLOCKED, "Blocked on application data during handshake") \
+    ERR_ENTRY(S2N_ERR_KTLS_MANAGED_IO, "kTLS cannot be enabled while custom I/O is configured for the connection")  \
+    ERR_ENTRY(S2N_ERR_HANDSHAKE_NOT_COMPLETE, "Operation is only allowed after the handshake is complete") \
+    ERR_ENTRY(S2N_ERR_KTLS_UNSUPPORTED_PLATFORM, "kTLS is unsupported on this platform") \
+    ERR_ENTRY(S2N_ERR_KTLS_UNSUPPORTED_CONN, "kTLS is unsupported for this connection") \
+    ERR_ENTRY(S2N_ERR_KTLS_ENABLE, "An error occurred when attempting to enable kTLS on socket. Ensure the 'tls' kernel module is enabled.")  \
+    ERR_ENTRY(S2N_ERR_KTLS_BAD_CMSG, "Error handling cmsghdr.")  \
+    ERR_ENTRY(S2N_ERR_ATOMIC, "Atomic operations in this environment would require locking") \
+    ERR_ENTRY(S2N_ERR_TEST_ASSERTION, "Test assertion failed") \
+    ERR_ENTRY(S2N_ERR_KTLS_RENEG, "kTLS does not support secure renegotiation") \
+    ERR_ENTRY(S2N_ERR_KTLS_KEYUPDATE, "Received KeyUpdate from peer, but kernel does not support updating tls keys") \
+    ERR_ENTRY(S2N_ERR_KTLS_KEY_LIMIT, "Reached key encryption limit, but kernel does not support updating tls keys") \
+    ERR_ENTRY(S2N_ERR_UNEXPECTED_CERT_REQUEST, "Client forbids mutual authentication, but server requested a cert") \
+    ERR_ENTRY(S2N_ERR_MISSING_CERT_REQUEST, "Client requires mutual authentication, but server did not request a cert") \
+    ERR_ENTRY(S2N_ERR_MISSING_CLIENT_CERT, "Server requires client certificate") \
+    ERR_ENTRY(S2N_ERR_INVALID_SERIALIZED_CONNECTION, "Serialized connection is invalid"); \
+    ERR_ENTRY(S2N_ERR_TOO_MANY_CAS, "Too many certificate authorities in trust store"); \
+    ERR_ENTRY(S2N_ERR_BAD_HEX, "Could not parse malformed hex string"); \
+    ERR_ENTRY(S2N_ERR_CONFIG_NULL_BEFORE_CH_CALLBACK, "Config set to NULL before client hello callback. This should not be possible outside of tests."); \
+    ERR_ENTRY(S2N_ERR_API_UNSUPPORTED_BY_LIBCRYPTO, "The invoked s2n-tls API is not supported by the libcrypto"); \
+    ERR_ENTRY(S2N_ERR_FIPS_MODE_UNSUPPORTED, "FIPS mode is not supported for the libcrypto"); \
+    /* clang-format on */
 
-#define ERR_STR_CASE(ERR, str) case ERR: return str;
-#define ERR_NAME_CASE(ERR, str) case ERR: return #ERR;
+#define ERR_STR_CASE(ERR, str) \
+    case ERR:                  \
+        return str;
+#define ERR_NAME_CASE(ERR, str) \
+    case ERR:                   \
+        return #ERR;
 
 const char *s2n_strerror(int error, const char *lang)
 {
@@ -307,7 +349,7 @@ const char *s2n_strerror(int error, const char *lang)
         case S2N_ERR_T_USAGE_END:
             break;
 
-        /* No default to make compiler fail on missing values */
+            /* No default to make compiler fail on missing values */
     }
 
     return no_such_error;
@@ -330,7 +372,7 @@ const char *s2n_strerror_name(int error)
         case S2N_ERR_T_USAGE_END:
             break;
 
-        /* No default to make compiler fail on missing values */
+            /* No default to make compiler fail on missing values */
     }
 
     return no_such_error;
@@ -351,14 +393,23 @@ const char *s2n_strerror_debug(int error, const char *lang)
         return s2n_strerror(error, lang);
     }
 
-    return s2n_debug_str;
+    return _s2n_debug_info.debug_str;
+}
+
+const char *s2n_strerror_source(int error)
+{
+    /* No error, just return the no error string */
+    if (error == S2N_ERR_OK) {
+        return s2n_strerror(error, "EN");
+    }
+
+    return _s2n_debug_info.source;
 }
 
 int s2n_error_get_type(int error)
 {
     return (error >> S2N_ERR_NUM_VALUE_BITS);
 }
-
 
 /* https://www.gnu.org/software/libc/manual/html_node/Backtraces.html */
 static bool s_s2n_stack_traces_enabled = false;
@@ -374,17 +425,23 @@ int s2n_stack_traces_enabled_set(bool newval)
     return S2N_SUCCESS;
 }
 
+void s2n_debug_info_reset(void)
+{
+    _s2n_debug_info.debug_str = "";
+    _s2n_debug_info.source = "";
+}
+
 #ifdef S2N_STACKTRACE
 
-#define MAX_BACKTRACE_DEPTH 20
-__thread struct s2n_stacktrace tl_stacktrace = {0};
+    #define MAX_BACKTRACE_DEPTH 20
+__thread struct s2n_stacktrace tl_stacktrace = { 0 };
 
 int s2n_free_stacktrace(void)
 {
     if (tl_stacktrace.trace != NULL) {
         free(tl_stacktrace.trace);
-	struct s2n_stacktrace zero_stacktrace = {0};
-	tl_stacktrace = zero_stacktrace;
+        struct s2n_stacktrace zero_stacktrace = { 0 };
+        tl_stacktrace = zero_stacktrace;
     }
     return S2N_SUCCESS;
 }
@@ -404,7 +461,8 @@ int s2n_calculate_stacktrace(void)
     return S2N_SUCCESS;
 }
 
-int s2n_get_stacktrace(struct s2n_stacktrace *trace) {
+int s2n_get_stacktrace(struct s2n_stacktrace *trace)
+{
     *trace = tl_stacktrace;
     return S2N_SUCCESS;
 }
@@ -412,20 +470,20 @@ int s2n_get_stacktrace(struct s2n_stacktrace *trace) {
 int s2n_print_stacktrace(FILE *fptr)
 {
     if (!s_s2n_stack_traces_enabled) {
-      fprintf(fptr, "%s\n%s\n",
-	      "NOTE: Some details are omitted, run with S2N_PRINT_STACKTRACE=1 for a verbose backtrace.",
-	      "See https://github.com/aws/s2n-tls/blob/main/docs/USAGE-GUIDE.md");
+        fprintf(fptr, "%s\n%s\n",
+                "NOTE: Some details are omitted, run with S2N_PRINT_STACKTRACE=1 for a verbose backtrace.",
+                "See https://github.com/aws/s2n-tls/blob/main/docs/usage-guide");
         return S2N_SUCCESS;
     }
 
     fprintf(fptr, "\nStacktrace is:\n");
-    for (int i = 0; i < tl_stacktrace.trace_size; ++i){
-        fprintf(fptr, "%s\n",  tl_stacktrace.trace[i]);
+    for (int i = 0; i < tl_stacktrace.trace_size; ++i) {
+        fprintf(fptr, "%s\n", tl_stacktrace.trace[i]);
     }
     return S2N_SUCCESS;
 }
 
-#else /* !S2N_STACKTRACE */
+#else  /* !S2N_STACKTRACE */
 int s2n_free_stacktrace(void)
 {
     S2N_ERROR(S2N_ERR_UNIMPLEMENTED);
@@ -433,8 +491,7 @@ int s2n_free_stacktrace(void)
 
 int s2n_calculate_stacktrace(void)
 {
-    if (!s_s2n_stack_traces_enabled)
-    {
+    if (!s_s2n_stack_traces_enabled) {
         return S2N_SUCCESS;
     }
 

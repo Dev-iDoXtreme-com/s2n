@@ -13,16 +13,14 @@
  * permissions and limitations under the License.
  */
 
-#include "stuffer/s2n_stuffer.h"
-
-#include "utils/s2n_safety.h"
-
-#include "tls/s2n_connection.h"
-#include "tls/s2n_tls.h"
-
 #include "tls/extensions/s2n_server_alpn.h"
 
-static bool s2n_alpn_should_send(struct s2n_connection *conn);
+#include "stuffer/s2n_stuffer.h"
+#include "tls/s2n_connection.h"
+#include "tls/s2n_tls.h"
+#include "utils/s2n_safety.h"
+
+bool s2n_server_alpn_should_send(struct s2n_connection *conn);
 static int s2n_alpn_send(struct s2n_connection *conn, struct s2n_stuffer *out);
 static int s2n_alpn_recv(struct s2n_connection *conn, struct s2n_stuffer *extension);
 
@@ -31,11 +29,11 @@ const s2n_extension_type s2n_server_alpn_extension = {
     .is_response = true,
     .send = s2n_alpn_send,
     .recv = s2n_alpn_recv,
-    .should_send = s2n_alpn_should_send,
+    .should_send = s2n_server_alpn_should_send,
     .if_missing = s2n_extension_noop_if_missing,
 };
 
-static bool s2n_alpn_should_send(struct s2n_connection *conn)
+bool s2n_server_alpn_should_send(struct s2n_connection *conn)
 {
     return conn && strlen(conn->application_protocol) > 0;
 }
@@ -59,16 +57,15 @@ static int s2n_alpn_recv(struct s2n_connection *conn, struct s2n_stuffer *extens
 {
     POSIX_ENSURE_REF(conn);
 
-    uint16_t size_of_all;
+    uint16_t size_of_all = 0;
     POSIX_GUARD(s2n_stuffer_read_uint16(extension, &size_of_all));
     if (size_of_all > s2n_stuffer_data_available(extension) || size_of_all < 3) {
         /* ignore invalid extension size */
         return S2N_SUCCESS;
     }
 
-    uint8_t protocol_len;
+    uint8_t protocol_len = 0;
     POSIX_GUARD(s2n_stuffer_read_uint8(extension, &protocol_len));
-    POSIX_ENSURE_LT(protocol_len, s2n_array_len(conn->application_protocol));
 
     uint8_t *protocol = s2n_stuffer_raw_read(extension, protocol_len);
     POSIX_ENSURE_REF(protocol);

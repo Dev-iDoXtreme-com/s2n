@@ -14,11 +14,11 @@
  */
 
 #include <string.h>
+#include <sys/param.h>
 
 #include "stuffer/s2n_stuffer.h"
-
-#include "utils/s2n_safety.h"
 #include "utils/s2n_mem.h"
+#include "utils/s2n_safety.h"
 
 int s2n_stuffer_peek_char(struct s2n_stuffer *s2n_stuffer, char *c)
 {
@@ -54,7 +54,9 @@ int s2n_stuffer_skip_whitespace(struct s2n_stuffer *s2n_stuffer, uint32_t *skipp
             break;
         }
     }
-    if(skipped != NULL) *skipped = s2n_stuffer->read_cursor - initial_read_cursor;
+    if (skipped != NULL) {
+        *skipped = s2n_stuffer->read_cursor - initial_read_cursor;
+    }
     POSIX_POSTCONDITION(s2n_stuffer_validate(s2n_stuffer));
     return S2N_SUCCESS;
 }
@@ -81,7 +83,7 @@ int s2n_stuffer_skip_read_until(struct s2n_stuffer *stuffer, const char *target)
 {
     POSIX_PRECONDITION(s2n_stuffer_validate(stuffer));
     POSIX_ENSURE_REF(target);
-    const int len = strlen(target);
+    const uint32_t len = strlen(target);
     if (len == 0) {
         return S2N_SUCCESS;
     }
@@ -91,7 +93,7 @@ int s2n_stuffer_skip_read_until(struct s2n_stuffer *stuffer, const char *target)
         uint8_t *actual = stuffer->blob.data + stuffer->read_cursor - len;
         POSIX_ENSURE_REF(actual);
 
-        if (strncmp((char*)actual, target, len) == 0){
+        if (strncmp((char *) actual, target, len) == 0) {
             return S2N_SUCCESS;
         } else {
             /* If string doesn't match, rewind stuffer to 1 byte after last read */
@@ -118,14 +120,15 @@ int s2n_stuffer_skip_to_char(struct s2n_stuffer *stuffer, const char target)
 }
 
 /* Skips an expected character in the stuffer between min and max times */
-int s2n_stuffer_skip_expected_char(struct s2n_stuffer *stuffer, const char expected, const uint32_t min, const uint32_t max, uint32_t *skipped)
+int s2n_stuffer_skip_expected_char(struct s2n_stuffer *stuffer, const char expected, const uint32_t min,
+        const uint32_t max, uint32_t *skipped)
 {
     POSIX_PRECONDITION(s2n_stuffer_validate(stuffer));
     POSIX_ENSURE(min <= max, S2N_ERR_SAFETY);
 
     uint32_t skip = 0;
     while (stuffer->read_cursor < stuffer->write_cursor && skip < max) {
-        if (stuffer->blob.data[stuffer->read_cursor] == expected){
+        if (stuffer->blob.data[stuffer->read_cursor] == expected) {
             stuffer->read_cursor += 1;
             skip += 1;
         } else {
@@ -133,7 +136,9 @@ int s2n_stuffer_skip_expected_char(struct s2n_stuffer *stuffer, const char expec
         }
     }
     POSIX_ENSURE(skip >= min, S2N_ERR_STUFFER_NOT_FOUND);
-    if(skipped != NULL) *skipped = skip;
+    if (skipped != NULL) {
+        *skipped = skip;
+    }
     POSIX_POSTCONDITION(s2n_stuffer_validate(stuffer));
     return S2N_SUCCESS;
 }
@@ -186,7 +191,7 @@ int s2n_stuffer_alloc_ro_from_string(struct s2n_stuffer *stuffer, const char *st
     POSIX_ENSURE_REF(str);
     uint32_t length = strlen(str);
     POSIX_GUARD(s2n_stuffer_alloc(stuffer, length + 1));
-    return s2n_stuffer_write_bytes(stuffer, (const uint8_t *)str, length);
+    return s2n_stuffer_write_bytes(stuffer, (const uint8_t *) str, length);
 }
 
 int s2n_stuffer_init_ro_from_string(struct s2n_stuffer *stuffer, uint8_t *data, uint32_t length)
@@ -200,5 +205,80 @@ int s2n_stuffer_init_ro_from_string(struct s2n_stuffer *stuffer, uint8_t *data, 
     POSIX_GUARD(s2n_stuffer_init(stuffer, &data_blob));
     POSIX_GUARD(s2n_stuffer_skip_write(stuffer, length));
 
+    return S2N_SUCCESS;
+}
+
+/* If we call va_start or va_copy there MUST be a matching call to va_end,
+ * so we should use DEFER_CLEANUP with our va_lists.
+ * Unfortunately, some environments implement va_list in ways that don't
+ * act as expected when passed by reference. For example, because va_end is
+ * a macro it may expect va_list to be an array (maybe to call sizeof),
+ * but passing va_list by reference will cause it to decay to a pointer instead.
+ * To avoid any surprises, just wrap the va_list in our own struct.
+ */
+struct s2n_va_list {
+    va_list va_list;
+};
+
+static void s2n_va_list_cleanup(struct s2n_va_list *list)
+{
+    if (list) {
+        va_end(list->va_list);
+    }
+}
+
+int s2n_stuffer_vprintf(struct s2n_stuffer *stuffer, const char *format, va_list vargs_in)
+{
+    POSIX_PRECONDITION(s2n_stuffer_validate(stuffer));
+    POSIX_ENSURE_REF(format);
+
+    /* vsnprintf consumes the va_list, so copy it first */
+    DEFER_CLEANUP(struct s2n_va_list vargs_1 = { 0 }, s2n_va_list_cleanup);
+    va_copy(vargs_1.va_list, vargs_in);
+
+    /* The first call to vsnprintf calculates the size of the formatted string.
+     * str_len does not include the one byte vsnprintf requires for a trailing '\0',
+     * so we need one more byte.
+     */
+    int str_len = vsnprintf(NULL, 0, format, vargs_1.va_list);
+    POSIX_ENSURE_GTE(str_len, 0);
+    POSIX_ENSURE_LT(str_len, INT_MAX);
+    int mem_size = str_len + 1;
+
+    /* 'tainted' indicates that pointers to the contents of the stuffer exist,
+     * so resizing / reallocated the stuffer will invalidate those pointers.
+     * However, we do not resize the stuffer in this method after creating `str`
+     * and `str` does not live beyond this method, so ignore `str` for the
+     * purposes of tracking 'tainted'.
+     */
+    bool previously_tainted = stuffer->tainted;
+    char *str = s2n_stuffer_raw_write(stuffer, mem_size);
+    stuffer->tainted = previously_tainted;
+    POSIX_GUARD_PTR(str);
+
+    /* vsnprintf again consumes the va_list, so copy it first */
+    DEFER_CLEANUP(struct s2n_va_list vargs_2 = { 0 }, s2n_va_list_cleanup);
+    va_copy(vargs_2.va_list, vargs_in);
+
+    /* This time, vsnprintf actually writes the formatted string */
+    int written = vsnprintf(str, mem_size, format, vargs_2.va_list);
+    if (written != str_len) {
+        /* If the write fails, undo our raw write */
+        POSIX_GUARD(s2n_stuffer_wipe_n(stuffer, mem_size));
+        POSIX_BAIL(S2N_ERR_SAFETY);
+    }
+
+    /* We don't actually use c-strings, so erase the final '\0' */
+    POSIX_GUARD(s2n_stuffer_wipe_n(stuffer, 1));
+
+    POSIX_POSTCONDITION(s2n_stuffer_validate(stuffer));
+    return S2N_SUCCESS;
+}
+
+int s2n_stuffer_printf(struct s2n_stuffer *stuffer, const char *format, ...)
+{
+    DEFER_CLEANUP(struct s2n_va_list vargs = { 0 }, s2n_va_list_cleanup);
+    va_start(vargs.va_list, format);
+    POSIX_GUARD(s2n_stuffer_vprintf(stuffer, format, vargs.va_list));
     return S2N_SUCCESS;
 }
