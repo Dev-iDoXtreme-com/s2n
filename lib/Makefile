@@ -13,16 +13,12 @@
 # permissions and limitations under the License.
 #
 
-OBJS = $(wildcard ../utils/*.o ../stuffer/*.o ../tls/*.o ../tls/*/*.o ../iana/*.o ../crypto/*.o ../error/*.o ../pq-crypto/*.o  ../pq-crypto/kyber_r3/*.o)
+OBJS = $(wildcard ../utils/*.o ../stuffer/*.o ../tls/*.o ../tls/*/*.o ../iana/*.o ../crypto/*.o ../error/*.o)
 
 .PHONY : all
 all: libs2n.a libs2n.so libs2n.dylib
 
 include ../s2n.mk
-
-ifeq ($(FUZZ_COVERAGE), true)
-	FUZZCOV_FLAGS = -fprofile-instr-generate -fcoverage-mapping
-endif
 
 libs2n.a: ${OBJS}
 	$(AR) cru libs2n.a ${OBJS}
@@ -40,7 +36,10 @@ $(libdir):
 install: libs2n.a libs2n.so $(libdir)
 	@cp libs2n.*  $(libdir)
 	@cp ../api/s2n.h  $(includedir)
+	@mkdir -p $(includedir)/s2n
+	@cp -r ../api/unstable  $(includedir)/s2n
 
 uninstall:
-	@rm $(libdir)/libs2n.*
-	@rm $(includedir)/s2n.h
+	@rm -f $(libdir)/libs2n.*
+	@rm -f $(includedir)/s2n.h
+	@rm -rf $(includedir)/s2n/

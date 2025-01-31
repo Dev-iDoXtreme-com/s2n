@@ -13,10 +13,11 @@
  * permissions and limitations under the License.
  */
 
-#include "s2n_test.h"
 #include "crypto/s2n_openssl.h"
 
-int main(int argc, char **argv)
+#include "s2n_test.h"
+
+int main(int argc, char** argv)
 {
     BEGIN_TEST();
 
@@ -25,15 +26,31 @@ int main(int argc, char **argv)
         END_TEST();
     }
 
-    if (strcmp(env_libcrypto, "boringssl") == 0) {
-        EXPECT_FALSE(s2n_libcrypto_is_awslc());
-        EXPECT_TRUE(s2n_libcrypto_is_boringssl());
-    } else if (strcmp(env_libcrypto, "awslc") == 0 || strcmp(env_libcrypto, "awslc-fips") == 0) {
+    /* Confirm "S2N_LIBCRYPTO" env variable matches the linked libcrypto. */
+    if (strstr(env_libcrypto, "awslc") != NULL) {
         EXPECT_TRUE(s2n_libcrypto_is_awslc());
         EXPECT_FALSE(s2n_libcrypto_is_boringssl());
-    } else {
+        EXPECT_FALSE(s2n_libcrypto_is_libressl());
+        EXPECT_FALSE(s2n_libcrypto_is_openssl());
+    } else if (strcmp(env_libcrypto, "boringssl") == 0) {
+        EXPECT_FALSE(s2n_libcrypto_is_awslc());
+        EXPECT_TRUE(s2n_libcrypto_is_boringssl());
+        EXPECT_FALSE(s2n_libcrypto_is_libressl());
+        EXPECT_FALSE(s2n_libcrypto_is_openssl());
+    } else if (strcmp(env_libcrypto, "libressl") == 0) {
         EXPECT_FALSE(s2n_libcrypto_is_awslc());
         EXPECT_FALSE(s2n_libcrypto_is_boringssl());
+        EXPECT_TRUE(s2n_libcrypto_is_libressl());
+        EXPECT_FALSE(s2n_libcrypto_is_openssl());
+    } else if (strstr(env_libcrypto, "openssl") != NULL) {
+        EXPECT_FALSE(s2n_libcrypto_is_awslc());
+        EXPECT_FALSE(s2n_libcrypto_is_boringssl());
+        EXPECT_FALSE(s2n_libcrypto_is_libressl());
+        EXPECT_TRUE(s2n_libcrypto_is_openssl());
+    } else if (strcmp(env_libcrypto, "default") == 0) {
+        /* running with the default libcrypto on path */
+    } else {
+        FAIL_MSG("Testing with an unexpected libcrypto.");
     }
 
     END_TEST();

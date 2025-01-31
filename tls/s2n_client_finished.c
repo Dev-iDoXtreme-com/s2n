@@ -16,56 +16,48 @@
 #include <stdint.h>
 
 #include "error/s2n_errno.h"
-
+#include "stuffer/s2n_stuffer.h"
 #include "tls/s2n_connection.h"
 #include "tls/s2n_tls.h"
 #include "tls/s2n_tls13_handshake.h"
-
-#include "stuffer/s2n_stuffer.h"
-
 #include "utils/s2n_safety.h"
+
+S2N_RESULT s2n_finished_recv(struct s2n_connection *conn, uint8_t *our_version);
+S2N_RESULT s2n_finished_send(struct s2n_connection *conn, uint8_t *our_version);
 
 int s2n_client_finished_recv(struct s2n_connection *conn)
 {
-    uint8_t *our_version;
-    our_version = conn->handshake.client_finished;
-    uint8_t *their_version = s2n_stuffer_raw_read(&conn->handshake.io, S2N_TLS_FINISHED_LEN);
-    POSIX_ENSURE_REF(their_version);
+    POSIX_ENSURE_REF(conn);
 
-    S2N_ERROR_IF(!s2n_constant_time_equals(our_version, their_version, S2N_TLS_FINISHED_LEN) || conn->handshake.rsa_failed, S2N_ERR_BAD_MESSAGE);
-
-    return 0;
+    POSIX_GUARD(s2n_prf_client_finished(conn));
+    uint8_t *verify_data = conn->handshake.client_finished;
+    POSIX_GUARD_RESULT(s2n_finished_recv(conn, verify_data));
+    POSIX_ENSURE(!conn->handshake.rsa_failed, S2N_ERR_BAD_MESSAGE);
+    return S2N_SUCCESS;
 }
 
 int s2n_client_finished_send(struct s2n_connection *conn)
 {
-    uint8_t *our_version;
+    POSIX_ENSURE_REF(conn);
+
     POSIX_GUARD(s2n_prf_client_finished(conn));
+    uint8_t *verify_data = conn->handshake.client_finished;
+    POSIX_GUARD_RESULT(s2n_finished_send(conn, verify_data));
+    POSIX_GUARD_RESULT(s2n_crypto_parameters_switch(conn));
 
-    struct s2n_blob seq = {.data = conn->secure.client_sequence_number,.size = sizeof(conn->secure.client_sequence_number) };
-    POSIX_GUARD(s2n_blob_zero(&seq));
-    our_version = conn->handshake.client_finished;
-
-    /* Update the server to use the cipher suite */
-    conn->client = &conn->secure;
-
-    if (conn->actual_protocol_version == S2N_SSLv3) {
-        POSIX_GUARD(s2n_stuffer_write_bytes(&conn->handshake.io, our_version, S2N_SSL_FINISHED_LEN));
-    } else {
-        POSIX_GUARD(s2n_stuffer_write_bytes(&conn->handshake.io, our_version, S2N_TLS_FINISHED_LEN));
-    }
-    return 0;
+    return S2N_SUCCESS;
 }
 
-int s2n_tls13_client_finished_recv(struct s2n_connection *conn) {
+int s2n_tls13_client_finished_recv(struct s2n_connection *conn)
+{
     POSIX_ENSURE_EQ(conn->actual_protocol_version, S2N_TLS13);
 
     uint8_t length = s2n_stuffer_data_available(&conn->handshake.io);
     S2N_ERROR_IF(length == 0, S2N_ERR_BAD_MESSAGE);
 
     /* read finished mac from handshake */
-    struct s2n_blob wire_finished_mac = {0};
-    s2n_blob_init(&wire_finished_mac, s2n_stuffer_raw_read(&conn->handshake.io, length), length);
+    struct s2n_blob wire_finished_mac = { 0 };
+    POSIX_GUARD(s2n_blob_init(&wire_finished_mac, s2n_stuffer_raw_read(&conn->handshake.io, length), length));
 
     /* get tls13 keys */
     s2n_tls13_connection_keys(keys, conn);
@@ -75,7 +67,7 @@ int s2n_tls13_client_finished_recv(struct s2n_connection *conn) {
     struct s2n_hash_state *hash_state = &conn->handshake.hashes->hash_workspace;
     POSIX_GUARD_RESULT(s2n_handshake_copy_hash_state(conn, keys.hash_algorithm, hash_state));
 
-    struct s2n_blob finished_key = {0};
+    struct s2n_blob finished_key = { 0 };
     POSIX_GUARD(s2n_blob_init(&finished_key, conn->handshake.client_finished, keys.size));
 
     s2n_tls13_key_blob(client_finished_mac, keys.size);
@@ -86,7 +78,8 @@ int s2n_tls13_client_finished_recv(struct s2n_connection *conn) {
     return 0;
 }
 
-int s2n_tls13_client_finished_send(struct s2n_connection *conn) {
+int s2n_tls13_client_finished_send(struct s2n_connection *conn)
+{
     POSIX_ENSURE_EQ(conn->actual_protocol_version, S2N_TLS13);
 
     /* get tls13 keys */
@@ -98,7 +91,7 @@ int s2n_tls13_client_finished_send(struct s2n_connection *conn) {
     POSIX_GUARD_RESULT(s2n_handshake_copy_hash_state(conn, keys.hash_algorithm, hash_state));
 
     /* look up finished secret key */
-    struct s2n_blob finished_key = {0};
+    struct s2n_blob finished_key = { 0 };
     POSIX_GUARD(s2n_blob_init(&finished_key, conn->handshake.client_finished, keys.size));
 
     /* generate the hashed message authenticated code */

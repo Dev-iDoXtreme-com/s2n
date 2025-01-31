@@ -15,11 +15,10 @@
 
 #include <sys/param.h>
 
-#include "tls/s2n_early_data.h"
-
 #include "tls/s2n_connection.h"
-#include "utils/s2n_safety.h"
+#include "tls/s2n_early_data.h"
 #include "utils/s2n_mem.h"
+#include "utils/s2n_safety.h"
 
 int s2n_end_of_early_data_send(struct s2n_connection *conn)
 {
@@ -40,7 +39,7 @@ int s2n_end_of_early_data_recv(struct s2n_connection *conn)
 }
 
 /**
- *= https://tools.ietf.org/rfc/rfc8446#section-4.2.10
+ *= https://www.rfc-editor.org/rfc/rfc8446#section-4.2.10
  *# If the client attempts a 0-RTT handshake but the server
  *# rejects it, the server will generally not have the 0-RTT record
  *# protection keys and must instead use trial decryption (either with
@@ -89,7 +88,7 @@ S2N_RESULT s2n_early_data_record_bytes(struct s2n_connection *conn, ssize_t data
     }
 
     /* Ensure the bytes read are within the bounds of what we can actually record. */
-    if (data_len > (UINT64_MAX - conn->early_data_bytes)) {
+    if ((size_t) data_len > (UINT64_MAX - conn->early_data_bytes)) {
         conn->early_data_bytes = UINT64_MAX;
         RESULT_BAIL(S2N_ERR_INTEGER_OVERFLOW);
     }
@@ -116,7 +115,8 @@ S2N_RESULT s2n_early_data_validate_send(struct s2n_connection *conn, uint32_t by
     RESULT_ENSURE(conn->early_data_expected, S2N_ERR_EARLY_DATA_NOT_ALLOWED);
     RESULT_ENSURE(conn->mode == S2N_CLIENT, S2N_ERR_EARLY_DATA_NOT_ALLOWED);
     RESULT_ENSURE(conn->early_data_state == S2N_EARLY_DATA_REQUESTED
-            || conn->early_data_state == S2N_EARLY_DATA_ACCEPTED, S2N_ERR_EARLY_DATA_NOT_ALLOWED);
+                    || conn->early_data_state == S2N_EARLY_DATA_ACCEPTED,
+            S2N_ERR_EARLY_DATA_NOT_ALLOWED);
 
     uint32_t allowed_early_data_size = 0;
     RESULT_GUARD_POSIX(s2n_connection_get_remaining_early_data_size(conn, &allowed_early_data_size));
@@ -146,9 +146,11 @@ static bool s2n_early_data_can_continue(struct s2n_connection *conn)
             && remaining_early_data_size > 0;
 }
 
-S2N_RESULT s2n_send_early_data_impl(struct s2n_connection *conn, const uint8_t *data, ssize_t data_len,
+S2N_RESULT s2n_send_early_data_impl(struct s2n_connection *conn, const uint8_t *data, ssize_t data_len_signed,
         ssize_t *data_sent, s2n_blocked_status *blocked)
 {
+    RESULT_ENSURE_GTE(data_len_signed, 0);
+    size_t data_len = data_len_signed;
     RESULT_ENSURE_REF(conn);
     RESULT_ENSURE_REF(blocked);
     *blocked = S2N_NOT_BLOCKED;
@@ -167,9 +169,9 @@ S2N_RESULT s2n_send_early_data_impl(struct s2n_connection *conn, const uint8_t *
     int negotiate_result = s2n_negotiate(conn, blocked);
     if (negotiate_result < S2N_SUCCESS) {
         if (s2n_error_get_type(s2n_errno) != S2N_ERR_T_BLOCKED) {
-            return S2N_RESULT_ERROR;
+            RESULT_GUARD_POSIX(negotiate_result);
         } else if (*blocked != S2N_BLOCKED_ON_EARLY_DATA && *blocked != S2N_BLOCKED_ON_READ) {
-            return S2N_RESULT_ERROR;
+            RESULT_GUARD_POSIX(negotiate_result);
         }
     }
     /* Save the error status for later */
@@ -237,14 +239,15 @@ S2N_RESULT s2n_recv_early_data_impl(struct s2n_connection *conn, uint8_t *data, 
         return S2N_RESULT_OK;
     }
 
-    while(s2n_negotiate(conn, blocked) < S2N_SUCCESS) {
+    int negotiate_result = S2N_SUCCESS;
+    while ((negotiate_result = s2n_negotiate(conn, blocked)) != S2N_SUCCESS) {
         if (s2n_error_get_type(s2n_errno) != S2N_ERR_T_BLOCKED) {
-            return S2N_RESULT_ERROR;
+            RESULT_GUARD_POSIX(negotiate_result);
         } else if (max_data_len <= *data_received) {
-            return S2N_RESULT_ERROR;
+            RESULT_GUARD_POSIX(negotiate_result);
         } else if (*blocked != S2N_BLOCKED_ON_EARLY_DATA) {
             if (s2n_early_data_can_continue(conn)) {
-                return S2N_RESULT_ERROR;
+                RESULT_GUARD_POSIX(negotiate_result);
             } else {
                 *blocked = S2N_NOT_BLOCKED;
                 return S2N_RESULT_OK;

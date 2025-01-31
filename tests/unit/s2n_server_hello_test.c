@@ -13,18 +13,14 @@
  * permissions and limitations under the License.
  */
 
-#include "s2n_test.h"
-
-#include "testlib/s2n_testlib.h"
-
 #include "api/s2n.h"
-
+#include "s2n_test.h"
+#include "testlib/s2n_testlib.h"
 #include "tls/s2n_cipher_suites.h"
 #include "tls/s2n_quic_support.h"
+#include "tls/s2n_security_policies.h"
 #include "tls/s2n_tls.h"
 #include "tls/s2n_tls13.h"
-#include "tls/s2n_security_policies.h"
-
 #include "utils/s2n_safety.h"
 
 const uint8_t SESSION_ID_SIZE = 1;
@@ -32,9 +28,8 @@ const uint8_t COMPRESSION_METHOD_SIZE = 1;
 
 /* from RFC: https://tools.ietf.org/html/rfc8446#section-4.1.3*/
 const char hello_retry_random_hex[] =
-    "CF21AD74E59A6111BE1D8C021E65B891"
-    "C2A211167ABB8C5E079E09E2C8A8339C";
-
+        "CF21AD74E59A6111BE1D8C021E65B891"
+        "C2A211167ABB8C5E079E09E2C8A8339C";
 
 const uint8_t tls12_downgrade_protection_check_bytes[] = {
     0x44, 0x4F, 0x57, 0x4E, 0x47, 0x52, 0x44, 0x01
@@ -71,16 +66,16 @@ int main(int argc, char **argv)
     BEGIN_TEST();
     EXPECT_SUCCESS(s2n_disable_tls13_in_test());
 
-    struct s2n_cert_chain_and_key *chain_and_key;
+    struct s2n_cert_chain_and_key *chain_and_key = NULL;
     EXPECT_SUCCESS(s2n_test_cert_chain_and_key_new(&chain_and_key,
             S2N_DEFAULT_ECDSA_TEST_CERT_CHAIN, S2N_DEFAULT_ECDSA_TEST_PRIVATE_KEY));
 
     /* Test basic Server Hello Send */
     {
-        struct s2n_config *config;
+        struct s2n_config *config = NULL;
         EXPECT_NOT_NULL(config = s2n_config_new());
 
-        struct s2n_connection *conn;
+        struct s2n_connection *conn = NULL;
         EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
         EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
 
@@ -88,11 +83,11 @@ int main(int argc, char **argv)
 
         /* Test s2n_server_hello_send */
         const uint32_t total = S2N_TLS_PROTOCOL_VERSION_LEN
-            + S2N_TLS_RANDOM_DATA_LEN
-            + SESSION_ID_SIZE
-            + conn->session_id_len
-            + S2N_TLS_CIPHER_SUITE_LEN
-            + COMPRESSION_METHOD_SIZE;
+                + S2N_TLS_RANDOM_DATA_LEN
+                + SESSION_ID_SIZE
+                + conn->session_id_len
+                + S2N_TLS_CIPHER_SUITE_LEN
+                + COMPRESSION_METHOD_SIZE;
 
         conn->actual_protocol_version = S2N_TLS12;
         EXPECT_SUCCESS(s2n_server_hello_send(conn));
@@ -102,7 +97,7 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_config_free(config));
         EXPECT_SUCCESS(s2n_connection_free(conn));
-    }
+    };
 
     /* Test that legacy_version_field is set correct for TLS 1.3 Server Hello Send */
     {
@@ -134,15 +129,15 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_connection_free(conn));
 
         EXPECT_SUCCESS(s2n_disable_tls13_in_test());
-    }
+    };
 
     /* Test basic Server Hello Recv */
     {
-        struct s2n_config *server_config;
-        struct s2n_config *client_config;
+        struct s2n_config *server_config = NULL;
+        struct s2n_config *client_config = NULL;
 
-        struct s2n_connection *server_conn;
-        struct s2n_connection *client_conn;
+        struct s2n_connection *server_conn = NULL;
+        struct s2n_connection *client_conn = NULL;
 
         EXPECT_NOT_NULL(server_config = s2n_config_new());
         EXPECT_NOT_NULL(server_conn = s2n_connection_new(S2N_SERVER));
@@ -153,7 +148,7 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_connection_set_config(client_conn, client_config));
 
         server_conn->actual_protocol_version = S2N_TLS12;
-        server_conn->secure.cipher_suite = &s2n_ecdhe_rsa_with_aes_256_gcm_sha384;
+        server_conn->secure->cipher_suite = &s2n_ecdhe_rsa_with_aes_256_gcm_sha384;
 
         EXPECT_SUCCESS(s2n_server_hello_send(server_conn));
 
@@ -171,12 +166,12 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_config_free(server_config));
         EXPECT_SUCCESS(s2n_connection_free(client_conn));
         EXPECT_SUCCESS(s2n_connection_free(server_conn));
-    }
+    };
 
     /* Test Server Hello Recv with invalid cipher */
     {
-        struct s2n_connection *server_conn;
-        struct s2n_connection *client_conn;
+        struct s2n_connection *server_conn = NULL;
+        struct s2n_connection *client_conn = NULL;
 
         EXPECT_NOT_NULL(server_conn = s2n_connection_new(S2N_SERVER));
         EXPECT_NOT_NULL(client_conn = s2n_connection_new(S2N_CLIENT));
@@ -184,7 +179,7 @@ int main(int argc, char **argv)
         server_conn->actual_protocol_version = S2N_TLS12;
 
         /* This cipher is not in the client's default selection */
-        server_conn->secure.cipher_suite = &s2n_tls13_chacha20_poly1305_sha256;
+        server_conn->secure->cipher_suite = &s2n_tls13_chacha20_poly1305_sha256;
 
         EXPECT_SUCCESS(s2n_server_hello_send(server_conn));
 
@@ -197,18 +192,18 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_connection_free(client_conn));
         EXPECT_SUCCESS(s2n_connection_free(server_conn));
-    }
+    };
 
     /* Non-matching session IDs turn off EMS for the connection */
     {
-        struct s2n_connection *server_conn;
-        struct s2n_connection *client_conn;
+        struct s2n_connection *server_conn = NULL;
+        struct s2n_connection *client_conn = NULL;
 
         EXPECT_NOT_NULL(server_conn = s2n_connection_new(S2N_SERVER));
         EXPECT_NOT_NULL(client_conn = s2n_connection_new(S2N_CLIENT));
 
         server_conn->actual_protocol_version = S2N_TLS12;
-        server_conn->secure.cipher_suite = &s2n_ecdhe_rsa_with_aes_256_gcm_sha384;
+        server_conn->secure->cipher_suite = &s2n_ecdhe_rsa_with_aes_256_gcm_sha384;
 
         /* Create session ID for server */
         for (int i = 0; i < 32; i++) {
@@ -234,13 +229,13 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_connection_free(client_conn));
         EXPECT_SUCCESS(s2n_connection_free(server_conn));
-    }
+    };
 
     /* Test TLS 1.3 session id matching */
     {
         EXPECT_SUCCESS(s2n_enable_tls13_in_test());
-        struct s2n_config *client_config;
-        struct s2n_connection *client_conn;
+        struct s2n_config *client_config = NULL;
+        struct s2n_connection *client_conn = NULL;
         EXPECT_NOT_NULL(client_config = s2n_config_new());
         EXPECT_NOT_NULL(client_conn = s2n_connection_new(S2N_CLIENT));
         EXPECT_SUCCESS(s2n_connection_set_config(client_conn, client_config));
@@ -251,10 +246,10 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_stuffer_write_uint8(io, S2N_TLS12 % 10));
 
         /* random payload */
-        uint8_t random[S2N_TLS_RANDOM_DATA_LEN] = {0};
+        uint8_t random[S2N_TLS_RANDOM_DATA_LEN] = { 0 };
         EXPECT_SUCCESS(s2n_stuffer_write_bytes(io, random, S2N_TLS_RANDOM_DATA_LEN));
 
-        uint8_t session_id[S2N_TLS_SESSION_ID_MAX_LEN] = {0};
+        uint8_t session_id[S2N_TLS_SESSION_ID_MAX_LEN] = { 0 };
 
         /* generate matching session id for payload and client connection */
         for (int i = 0; i < 32; i++) {
@@ -266,7 +261,7 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_stuffer_write_uint8(io, S2N_TLS_SESSION_ID_MAX_LEN));
         EXPECT_SUCCESS(s2n_stuffer_write_bytes(io, session_id, S2N_TLS_SESSION_ID_MAX_LEN));
         EXPECT_SUCCESS(s2n_stuffer_write_uint16(io, (0x13 << 8) + 0x01)); /* cipher suites */
-        EXPECT_SUCCESS(s2n_stuffer_write_uint8(io, 0)); /* no compression */
+        EXPECT_SUCCESS(s2n_stuffer_write_uint8(io, 0));                   /* no compression */
 
         client_conn->server_protocol_version = S2N_TLS13;
         client_conn->session_id_len = 32;
@@ -297,15 +292,15 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_config_free(client_config));
         EXPECT_SUCCESS(s2n_connection_free(client_conn));
         EXPECT_SUCCESS(s2n_disable_tls13_in_test());
-    }
+    };
 
     /* Test TLS 1.3 => 1.1 protocol downgrade detection with a TLS1.3 client */
     {
         EXPECT_SUCCESS(s2n_enable_tls13_in_test());
-        struct s2n_config *client_config;
-        struct s2n_connection *client_conn;
-        struct s2n_config *server_config;
-        struct s2n_connection *server_conn;
+        struct s2n_config *client_config = NULL;
+        struct s2n_connection *client_conn = NULL;
+        struct s2n_config *server_config = NULL;
+        struct s2n_connection *server_conn = NULL;
 
         EXPECT_NOT_NULL(server_config = s2n_config_new());
         EXPECT_NOT_NULL(server_conn = s2n_connection_new(S2N_SERVER));
@@ -341,15 +336,15 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_connection_free(client_conn));
         EXPECT_SUCCESS(s2n_connection_free(server_conn));
         EXPECT_SUCCESS(s2n_disable_tls13_in_test());
-    }
+    };
 
     /* Test TLS 1.3 => 1.2 protocol downgrade detection with a TLS1.3 client */
     {
         EXPECT_SUCCESS(s2n_enable_tls13_in_test());
-        struct s2n_config *client_config;
-        struct s2n_connection *client_conn;
-        struct s2n_config *server_config;
-        struct s2n_connection *server_conn;
+        struct s2n_config *client_config = NULL;
+        struct s2n_connection *client_conn = NULL;
+        struct s2n_config *server_config = NULL;
+        struct s2n_connection *server_conn = NULL;
 
         EXPECT_NOT_NULL(server_config = s2n_config_new());
         EXPECT_NOT_NULL(server_conn = s2n_connection_new(S2N_SERVER));
@@ -385,14 +380,14 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_connection_free(client_conn));
         EXPECT_SUCCESS(s2n_connection_free(server_conn));
         EXPECT_SUCCESS(s2n_disable_tls13_in_test());
-    }
+    };
 
     /* Verify a TLS1.2 client can negotiate with a TLS1.3 server */
     {
-        struct s2n_config *client_config;
-        struct s2n_connection *client_conn;
-        struct s2n_config *server_config;
-        struct s2n_connection *server_conn;
+        struct s2n_config *client_config = NULL;
+        struct s2n_connection *client_conn = NULL;
+        struct s2n_config *server_config = NULL;
+        struct s2n_connection *server_conn = NULL;
 
         EXPECT_NOT_NULL(server_config = s2n_config_new());
         EXPECT_NOT_NULL(server_conn = s2n_connection_new(S2N_SERVER));
@@ -409,7 +404,7 @@ int main(int argc, char **argv)
         /* the client only support TLS1.2 */
         EXPECT_SUCCESS(s2n_enable_tls13_in_test());
         server_conn->actual_protocol_version = S2N_TLS12;
-        server_conn->secure.cipher_suite = &s2n_ecdhe_rsa_with_aes_256_gcm_sha384;
+        server_conn->secure->cipher_suite = &s2n_ecdhe_rsa_with_aes_256_gcm_sha384;
         EXPECT_SUCCESS(s2n_server_hello_send(server_conn));
         EXPECT_SUCCESS(s2n_disable_tls13_in_test());
 
@@ -427,14 +422,14 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_config_free(server_config));
         EXPECT_SUCCESS(s2n_connection_free(client_conn));
         EXPECT_SUCCESS(s2n_connection_free(server_conn));
-    }
+    };
 
     /* Verify a TLS1.3 client can negotiate with a TLS1.2 server */
     {
-        struct s2n_config *client_config;
-        struct s2n_connection *client_conn;
-        struct s2n_config *server_config;
-        struct s2n_connection *server_conn;
+        struct s2n_config *client_config = NULL;
+        struct s2n_connection *client_conn = NULL;
+        struct s2n_config *server_config = NULL;
+        struct s2n_connection *server_conn = NULL;
 
         EXPECT_NOT_NULL(server_config = s2n_config_new());
         EXPECT_NOT_NULL(server_conn = s2n_connection_new(S2N_SERVER));
@@ -451,7 +446,7 @@ int main(int argc, char **argv)
         server_conn->server_protocol_version = S2N_TLS12;
         server_conn->actual_protocol_version = S2N_TLS12;
 
-        server_conn->secure.cipher_suite = &s2n_ecdhe_rsa_with_aes_256_gcm_sha384;
+        server_conn->secure->cipher_suite = &s2n_ecdhe_rsa_with_aes_256_gcm_sha384;
         EXPECT_SUCCESS(s2n_server_hello_send(server_conn));
 
         /* Copy server stuffer to client stuffer */
@@ -469,14 +464,14 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_config_free(server_config));
         EXPECT_SUCCESS(s2n_connection_free(client_conn));
         EXPECT_SUCCESS(s2n_connection_free(server_conn));
-    }
+    };
 
     /* Verify a TLS1.2 client can negotiate with a TLS1.3 server */
     {
-        struct s2n_config *client_config;
-        struct s2n_connection *client_conn;
-        struct s2n_config *server_config;
-        struct s2n_connection *server_conn;
+        struct s2n_config *client_config = NULL;
+        struct s2n_connection *client_conn = NULL;
+        struct s2n_config *server_config = NULL;
+        struct s2n_connection *server_conn = NULL;
 
         EXPECT_NOT_NULL(server_config = s2n_config_new());
         EXPECT_NOT_NULL(server_conn = s2n_connection_new(S2N_SERVER));
@@ -494,7 +489,7 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_enable_tls13_in_test());
         server_conn->actual_protocol_version = S2N_TLS12;
 
-        server_conn->secure.cipher_suite = &s2n_ecdhe_rsa_with_aes_256_gcm_sha384;
+        server_conn->secure->cipher_suite = &s2n_ecdhe_rsa_with_aes_256_gcm_sha384;
         EXPECT_SUCCESS(s2n_server_hello_send(server_conn));
         EXPECT_SUCCESS(s2n_disable_tls13_in_test());
 
@@ -512,11 +507,11 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_config_free(server_config));
         EXPECT_SUCCESS(s2n_connection_free(client_conn));
         EXPECT_SUCCESS(s2n_connection_free(server_conn));
-    }
+    };
 
     /* TLS13 hello retry message received results into S2N_ERR_UNIMPLEMENTED error*/
     {
-        struct s2n_connection *client_conn;
+        struct s2n_connection *client_conn = NULL;
         EXPECT_NOT_NULL(client_conn = s2n_connection_new(S2N_CLIENT));
         struct s2n_stuffer *io = &client_conn->handshake.io;
         client_conn->server_protocol_version = S2N_TLS13;
@@ -525,7 +520,7 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_stuffer_write_uint8(io, S2N_TLS12 / 10));
         EXPECT_SUCCESS(s2n_stuffer_write_uint8(io, S2N_TLS12 % 10));
 
-        uint8_t session_id[S2N_TLS_SESSION_ID_MAX_LEN] = {0};
+        uint8_t session_id[S2N_TLS_SESSION_ID_MAX_LEN] = { 0 };
         S2N_BLOB_FROM_HEX(random_blob, hello_retry_random_hex);
 
         /* random payload */
@@ -543,7 +538,7 @@ int main(int argc, char **argv)
         EXPECT_EQUAL(S2N_TLS_RANDOM_DATA_LEN, random_blob.size);
 
         EXPECT_SUCCESS(s2n_connection_free(client_conn));
-    }
+    };
 
     /* Test that negotiating TLS1.2 with QUIC-enabled client fails */
     if (s2n_is_tls13_fully_supported()) {
@@ -602,7 +597,7 @@ int main(int argc, char **argv)
 
             EXPECT_SUCCESS(s2n_connection_free(client_conn));
             EXPECT_SUCCESS(s2n_connection_free(server_conn));
-        }
+        };
 
         EXPECT_SUCCESS(s2n_config_free(quic_config));
         EXPECT_SUCCESS(s2n_config_free(non_quic_config));
@@ -610,7 +605,7 @@ int main(int argc, char **argv)
 
     /* Test that negotiating TLS1.2 with an early data enabled client fails.
      *
-     *= https://tools.ietf.org/rfc/rfc8446#appendix-D.3
+     *= https://www.rfc-editor.org/rfc/rfc8446#appendix-D.3
      *= type=test
      *# A client that attempts to send 0-RTT data MUST fail a connection if
      *# it receives a ServerHello with TLS 1.2 or older.
@@ -648,7 +643,7 @@ int main(int argc, char **argv)
 
             EXPECT_SUCCESS(s2n_connection_free(client_conn));
             EXPECT_SUCCESS(s2n_connection_free(server_conn));
-        }
+        };
 
         /* TLS 1.3 Client Early Data is rejected when server only supports TLS1.2 */
         {
@@ -677,7 +672,7 @@ int main(int argc, char **argv)
 
             EXPECT_SUCCESS(s2n_connection_free(client_conn));
             EXPECT_SUCCESS(s2n_connection_free(server_conn));
-        }
+        };
 
         EXPECT_SUCCESS(s2n_config_free(config));
         EXPECT_SUCCESS(s2n_disable_tls13_in_test());

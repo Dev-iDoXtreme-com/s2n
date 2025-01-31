@@ -1,20 +1,13 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 import copy
 import pytest
 
-from configuration import available_ports, ALL_TEST_CIPHERS, ALL_TEST_CURVES, ALL_TEST_CERTS
-from common import ProviderOptions, Protocols, Ciphers, Certificates, Signatures, data_bytes
-from fixtures import managed_process
+from configuration import available_ports, ALL_TEST_CIPHERS, ALL_TEST_CERTS
+from common import ProviderOptions, Protocols, Signatures, data_bytes
+from fixtures import managed_process  # lgtm [py/unused-import]
 from providers import Provider, S2N, OpenSSL, GnuTLS
 from utils import invalid_test_parameters, get_parameter_name, get_expected_s2n_version, to_bytes
-
-
-certs = [
-    Certificates.RSA_2048_SHA256,
-    Certificates.RSA_2048_SHA384,
-    Certificates.RSA_PSS_2048_SHA256,
-    Certificates.ECDSA_256,
-    Certificates.ECDSA_384,
-]
 
 all_sigs = [
     Signatures.RSA_SHA1,
@@ -23,9 +16,28 @@ all_sigs = [
     Signatures.RSA_SHA384,
     Signatures.RSA_SHA512,
     Signatures.ECDSA_SECP256r1_SHA256,
+    Signatures.ECDSA_SECP384r1_SHA384,
+    Signatures.ECDSA_SECP521r1_SHA512,
     Signatures.RSA_PSS_RSAE_SHA256,
     Signatures.RSA_PSS_PSS_SHA256,
+    Signatures.ECDSA_SHA1,
+    Signatures.ECDSA_SHA224,
+    Signatures.ECDSA_SHA256,
+    Signatures.ECDSA_SHA384,
+    Signatures.ECDSA_SHA512,
 ]
+
+
+def expected_signature(protocol, signature):
+    if protocol < Protocols.TLS12:
+        # ECDSA by default hashes with SHA-1.
+        #
+        # This is inferred from extended version of TLS1.1 rfc- https://www.rfc-editor.org/rfc/rfc4492#section-5.10
+        if signature.sig_type == 'ECDSA':
+            signature = Signatures.ECDSA_SHA1
+        else:
+            signature = Signatures.RSA_MD5_SHA1
+    return signature
 
 
 def signature_marker(mode, signature):
@@ -62,7 +74,7 @@ def skip_ciphers(*args, **kwargs):
 @pytest.mark.parametrize("cipher", ALL_TEST_CIPHERS, ids=get_parameter_name)
 @pytest.mark.parametrize("provider", [OpenSSL, GnuTLS])
 @pytest.mark.parametrize("other_provider", [S2N])
-@pytest.mark.parametrize("protocol", [Protocols.TLS13, Protocols.TLS12], ids=get_parameter_name)
+@pytest.mark.parametrize("protocol", [Protocols.TLS13, Protocols.TLS12, Protocols.TLS11], ids=get_parameter_name)
 @pytest.mark.parametrize("certificate", ALL_TEST_CERTS, ids=get_parameter_name)
 @pytest.mark.parametrize("signature", all_sigs, ids=get_parameter_name)
 @pytest.mark.parametrize("client_auth", [True, False], ids=lambda val: "client-auth" if val else "no-client-auth")
@@ -108,9 +120,9 @@ def test_s2n_server_signature_algorithms(managed_process, cipher, provider, othe
         assert to_bytes("Actual protocol version: {}".format(
             expected_version)) in results.stdout
         assert signature_marker(Provider.ServerMode,
-                                signature) in results.stdout
-        assert (signature_marker(Provider.ClientMode, signature)
-                in results.stdout) == client_auth
+                                expected_signature(protocol, signature)) in results.stdout
+        assert (signature_marker(Provider.ClientMode,
+                                 expected_signature(protocol, signature)) in results.stdout) == client_auth
         assert random_bytes in results.stdout
 
 
@@ -118,7 +130,7 @@ def test_s2n_server_signature_algorithms(managed_process, cipher, provider, othe
 @pytest.mark.parametrize("cipher", ALL_TEST_CIPHERS, ids=get_parameter_name)
 @pytest.mark.parametrize("provider", [OpenSSL, GnuTLS])
 @pytest.mark.parametrize("other_provider", [S2N])
-@pytest.mark.parametrize("protocol", [Protocols.TLS13, Protocols.TLS12], ids=get_parameter_name)
+@pytest.mark.parametrize("protocol", [Protocols.TLS13, Protocols.TLS12, Protocols.TLS11], ids=get_parameter_name)
 @pytest.mark.parametrize("certificate", ALL_TEST_CERTS, ids=get_parameter_name)
 @pytest.mark.parametrize("signature", all_sigs, ids=get_parameter_name)
 @pytest.mark.parametrize("client_auth", [True, False], ids=lambda val: "client-auth" if val else "no-client-auth")
@@ -177,6 +189,6 @@ def test_s2n_client_signature_algorithms(managed_process, cipher, provider, othe
         assert to_bytes("Actual protocol version: {}".format(
             expected_version)) in results.stdout
         assert signature_marker(
-            Provider.ServerMode, signature) in results.stdout or not server_sigalg_used
-        assert (signature_marker(Provider.ClientMode, signature)
+            Provider.ServerMode, expected_signature(protocol, signature)) in results.stdout or not server_sigalg_used
+        assert (signature_marker(Provider.ClientMode, expected_signature(protocol, signature))
                 in results.stdout) == client_auth

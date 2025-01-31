@@ -1,13 +1,15 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 import os
 import re
 import subprocess
-import string
 import threading
 import itertools
-
+import random
+import string
 
 from constants import TEST_CERT_DIRECTORY
-from global_flags import get_flag, S2N_NO_PQ, S2N_FIPS_MODE
+from global_flags import get_flag, S2N_PROVIDER_VERSION
 
 
 def data_bytes(n_bytes):
@@ -30,11 +32,15 @@ def data_bytes(n_bytes):
     return bytes(byte_array)
 
 
+def random_str(n):
+    return "".join(random.choice(string.ascii_uppercase + string.digits) for _ in range(n))
+
+
 def pq_enabled():
     """
     Returns true or false to indicate whether PQ crypto is enabled in s2n
     """
-    return not (get_flag(S2N_NO_PQ, False) or get_flag(S2N_FIPS_MODE, False))
+    return "awslc" in get_flag(S2N_PROVIDER_VERSION)
 
 
 class AvailablePorts(object):
@@ -45,7 +51,12 @@ class AvailablePorts(object):
     """
 
     def __init__(self, low=8000, high=30000):
-        worker_count = int(os.getenv('PYTEST_XDIST_WORKER_COUNT'))
+        worker_count = 1
+        # If pytest is being run in parallel, worker processes will have
+        # the WORKER_COUNT variable set.
+        parallel_workers = os.getenv('PYTEST_XDIST_WORKER_COUNT')
+        if parallel_workers is not None:
+            worker_count = int(parallel_workers)
         chunk_size = int((high - low) / worker_count)
 
         # If xdist is being used, parse the workerid from the envvar. This can
@@ -53,7 +64,7 @@ class AvailablePorts(object):
         worker = os.getenv('PYTEST_XDIST_WORKER')
         worker_id = 0
         if worker is not None:
-            worker_id = re.findall('gw(\d+)', worker)
+            worker_id = re.findall(r"gw(\d+)", worker)
             if len(worker_id) != 0:
                 worker_id = int(worker_id[0])
 
@@ -94,29 +105,44 @@ class Cert(object):
         self.cert = location + prefix + "_cert.pem"
         self.key = location + prefix + "_key.pem"
         self.algorithm = 'ANY'
+        self.curve = None
 
         if 'ECDSA' in name:
             self.algorithm = 'EC'
+            self.curve = name[-3:]
         elif 'RSA' in name:
             self.algorithm = 'RSA'
         if 'PSS' in name:
             self.algorithm = 'RSAPSS'
 
     def compatible_with_cipher(self, cipher):
-        return (self.algorithm == cipher.algorithm) or (cipher.algorithm == 'ANY')
+        if self.algorithm == cipher.algorithm:
+            return True
+        # TLS1.3 cipher suites do not specify auth method, so allow any auth method
+        if cipher.algorithm == 'ANY':
+            return True
+        if self.algorithm == 'RSAPSS':
+            # RSA-PSS certs can only be used by ciphers with RSA auth
+            if cipher.algorithm != 'RSA':
+                return False
+            # RSA-PSS certs do not support RSA key exchange, only RSA auth
+            # "DHE" here is intended to capture both "DHE" and "ECDHE"
+            if 'DHE' in cipher.name:
+                return True
+        return False
 
     def compatible_with_curve(self, curve):
         if self.algorithm != 'EC':
             return True
-
-        return curve.name[-3:] == self.name[-3:]
+        return curve.name[-3:] == self.curve
 
     def compatible_with_sigalg(self, sigalg):
-        if self.algorithm == 'EC':
-            if '384' in self.name and 'p256' in sigalg.name:
-                return False
-
-        return (self.algorithm == sigalg.algorithm)
+        if self.algorithm != sigalg.algorithm:
+            return False
+        sig_alg_has_curve = sigalg.algorithm == 'EC' and sigalg.min_protocol == Protocols.TLS13
+        if sig_alg_has_curve and self.curve not in sigalg.name:
+            return False
+        return True
 
     def __str__(self):
         return self.name
@@ -141,11 +167,14 @@ class Certificates(object):
 
     ECDSA_256 = Cert("ECDSA_256", "localhost_ecdsa_p256")
     ECDSA_384 = Cert("ECDSA_384", "ecdsa_p384_pkcs1")
+    ECDSA_521 = Cert("ECDSA_521", "ecdsa_p521")
 
     RSA_2048_SHA256_WILDCARD = Cert(
         "RSA_2048_SHA256_WILDCARD", "rsa_2048_sha256_wildcard")
     RSA_PSS_2048_SHA256 = Cert(
         "RSA_PSS_2048_SHA256", "localhost_rsa_pss_2048_sha256")
+
+    RSA_2048_PKCS1 = Cert("RSA_2048_PKCS1", "rsa_2048_pkcs1")
 
     OCSP = Cert("OCSP_RSA", "ocsp/server")
     OCSP_ECDSA = Cert("OCSP_ECDSA_256", "ocsp/server_ecdsa")
@@ -188,6 +217,7 @@ class Protocols(object):
     TLS11 = Protocol("TLS1.1", 32)
     TLS10 = Protocol("TLS1.0", 31)
     SSLv3 = Protocol("SSLv3", 30)
+    SSLv2 = Protocol("SSLv2", 20)
 
 
 class Cipher(object):
@@ -294,18 +324,13 @@ class Ciphers(object):
 
     KMS_TLS_1_0_2018_10 = Cipher(
         "KMS-TLS-1-0-2018-10", Protocols.TLS10, False, False, s2n=True)
-    KMS_PQ_TLS_1_0_2019_06 = Cipher(
-        "KMS-PQ-TLS-1-0-2019-06", Protocols.TLS10, False, False, s2n=True, pq=True)
-    KMS_PQ_TLS_1_0_2020_02 = Cipher(
-        "KMS-PQ-TLS-1-0-2020-02", Protocols.TLS10, False, False, s2n=True, pq=True)
-    KMS_PQ_TLS_1_0_2020_07 = Cipher(
-        "KMS-PQ-TLS-1-0-2020-07", Protocols.TLS10, False, False, s2n=True, pq=True)
-    PQ_SIKE_TEST_TLS_1_0_2019_11 = Cipher(
-        "PQ-SIKE-TEST-TLS-1-0-2019-11", Protocols.TLS10, False, False, s2n=True, pq=True)
-    PQ_SIKE_TEST_TLS_1_0_2020_02 = Cipher(
-        "PQ-SIKE-TEST-TLS-1-0-2020-02", Protocols.TLS10, False, False, s2n=True, pq=True)
-    PQ_TLS_1_0_2020_12 = Cipher(
-        "PQ-TLS-1-0-2020-12", Protocols.TLS10, False, False, s2n=True, pq=True)
+    PQ_TLS_1_0_2023_01 = Cipher(
+        "PQ-TLS-1-0-2023-01-24", Protocols.TLS10, False, False, s2n=True, pq=True)
+    PQ_TLS_1_3_2023_06_01 = Cipher(
+        "PQ-TLS-1-3-2023-06-01", Protocols.TLS12, False, False, s2n=True, pq=True)
+
+    SECURITY_POLICY_20210816 = Cipher(
+        "20210816", Protocols.TLS12, False, False, s2n=True, pq=False)
 
     @staticmethod
     def from_iana(iana_name):
@@ -337,8 +362,26 @@ class Curves(object):
     """
     X25519 = Curve("X25519", Protocols.TLS13)
     P256 = Curve("P-256")
-    P384 = Curve("P-384")
-    P521 = Curve("P-521")
+    # Our only SSLv3 provider doesn't support extensions
+    # so there is no way to negotiate a curve other than the
+    # default P-256 in SSLv3.
+    P384 = Curve("P-384", Protocols.TLS10)
+    P521 = Curve("P-521", Protocols.TLS10)
+    SecP256r1Kyber768Draft00 = Curve("SecP256r1Kyber768Draft00")
+    X25519Kyber768Draft00 = Curve("X25519Kyber768Draft00")
+
+    @staticmethod
+    def from_name(name):
+        curves = [
+            curve for attr in vars(Curves)
+            if not callable(curve := getattr(Curves, attr))
+            and not attr.startswith("_")
+            and curve.name
+        ]
+        return {
+            curve.name: curve
+            for curve in curves
+        }.get(name)
 
 
 class KemGroup(object):
@@ -350,8 +393,16 @@ class KemGroup(object):
 
 
 class KemGroups(object):
-    # oqs_openssl does not support x25519 based KEM groups
+    # Though s2n and oqs_openssl 3.x support KEM groups with 128-bit security
+    # ECC + Kyber >512, oqs_openssl 1.1.1 does not:
+    #
+    # https://github.com/open-quantum-safe/openssl/blob/OQS-OpenSSL_1_1_1-stable/oqs-template/oqs-kem-info.md
+    X25519_KYBER512R3 = KemGroup("X25519_kyber512")
     P256_KYBER512R3 = KemGroup("p256_kyber512")
+    P384_KYBER768R3 = KemGroup("p384_kyber768")
+    P521_KYBER1024R3 = KemGroup("p521_kyber1024")
+    SecP256r1Kyber768Draft00 = KemGroup("SecP256r1Kyber768Draft00")
+    X25519Kyber768Draft00 = KemGroup("X25519Kyber768Draft00")
 
 
 class Signature(object):
@@ -384,6 +435,12 @@ class Signatures(object):
     RSA_SHA256 = Signature('RSA+SHA256', max_protocol=Protocols.TLS12)
     RSA_SHA384 = Signature('RSA+SHA384', max_protocol=Protocols.TLS12)
     RSA_SHA512 = Signature('RSA+SHA512', max_protocol=Protocols.TLS12)
+    RSA_MD5_SHA1 = Signature('RSA+MD5_SHA1', max_protocol=Protocols.TLS11)
+    ECDSA_SHA224 = Signature('ECDSA+SHA224', max_protocol=Protocols.TLS12)
+    ECDSA_SHA256 = Signature('ECDSA+SHA256', max_protocol=Protocols.TLS12)
+    ECDSA_SHA384 = Signature('ECDSA+SHA384', max_protocol=Protocols.TLS12)
+    ECDSA_SHA512 = Signature('ECDSA+SHA512', max_protocol=Protocols.TLS12)
+    ECDSA_SHA1 = Signature('ECDSA+SHA1', max_protocol=Protocols.TLS12)
 
     RSA_PSS_RSAE_SHA256 = Signature(
         'RSA-PSS+SHA256',
@@ -392,7 +449,7 @@ class Signatures(object):
 
     RSA_PSS_PSS_SHA256 = Signature(
         'rsa_pss_pss_sha256',
-        min_protocol=Protocols.TLS13,
+        min_protocol=Protocols.TLS12,
         sig_type='RSA-PSS-PSS',
         sig_digest='SHA256')
 
@@ -401,6 +458,16 @@ class Signatures(object):
         min_protocol=Protocols.TLS13,
         sig_type='ECDSA',
         sig_digest='SHA256')
+    ECDSA_SECP384r1_SHA384 = Signature(
+        'ecdsa_secp384r1_sha384',
+        min_protocol=Protocols.TLS13,
+        sig_type='ECDSA',
+        sig_digest='SHA384')
+    ECDSA_SECP521r1_SHA512 = Signature(
+        'ecdsa_secp521r1_sha512',
+        min_protocol=Protocols.TLS13,
+        sig_type='ECDSA',
+        sig_digest='SHA512')
 
 
 class Results(object):
@@ -469,7 +536,8 @@ class ProviderOptions(object):
             enable_client_ocsp=False,
             ocsp_response=None,
             signature_algorithm=None,
-            record_size=None
+            record_size=None,
+            verbose=True
     ):
 
         # Client or server
@@ -500,7 +568,7 @@ class ProviderOptions(object):
         # Boolean whether to use a resumption ticket
         self.use_session_ticket = use_session_ticket
 
-        # Boolean whether to allow insecure certificates
+        # Boolean whether to disable x509 verification
         self.insecure = insecure
 
         # Which protocol to use with this provider
@@ -543,3 +611,9 @@ class ProviderOptions(object):
         self.signature_algorithm = signature_algorithm
 
         self.record_size = record_size
+
+        # How verbose should the provider be when printing to stdout?
+        # Default to more information, leave the option for less.
+        # Useful if you find that debugging information is printed between
+        # application data you expect the provider to print on stdout.
+        self.verbose = verbose

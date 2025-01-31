@@ -15,14 +15,12 @@
 
 #include "s2n_test.h"
 #include "testlib/s2n_testlib.h"
-
 #include "tls/s2n_handshake.h"
-
-#include "tls/s2n_tls.h"
 #include "tls/s2n_record.h"
+#include "tls/s2n_tls.h"
 
 static S2N_RESULT s2n_get_test_client_and_server(struct s2n_connection **client_conn, struct s2n_connection **server_conn,
-        struct s2n_config *config)
+        struct s2n_test_io_pair *io_pair, struct s2n_config *config)
 {
     *client_conn = s2n_connection_new(S2N_CLIENT);
     RESULT_ENSURE_REF(*client_conn);
@@ -34,9 +32,8 @@ static S2N_RESULT s2n_get_test_client_and_server(struct s2n_connection **client_
     RESULT_GUARD_POSIX(s2n_connection_set_config(*client_conn, config));
     RESULT_GUARD_POSIX(s2n_connection_set_config(*server_conn, config));
 
-    struct s2n_test_io_pair io_pair = { 0 };
-    RESULT_GUARD_POSIX(s2n_io_pair_init_non_blocking(&io_pair));
-    RESULT_GUARD_POSIX(s2n_connections_set_io_pair(*client_conn, *server_conn, &io_pair));
+    RESULT_GUARD_POSIX(s2n_io_pair_init_non_blocking(io_pair));
+    RESULT_GUARD_POSIX(s2n_connections_set_io_pair(*client_conn, *server_conn, io_pair));
 
     return S2N_RESULT_OK;
 }
@@ -72,12 +69,13 @@ int main()
             s2n_blocked_status blocked = 0;
             EXPECT_ERROR_WITH_ERRNO(s2n_negotiate_until_message(NULL, &blocked, CLIENT_HELLO), S2N_ERR_NULL);
             EXPECT_ERROR_WITH_ERRNO(s2n_negotiate_until_message(&conn, NULL, CLIENT_HELLO), S2N_ERR_NULL);
-        }
+        };
 
         /* If message is never encountered, complete the handshake */
         {
             struct s2n_connection *client_conn = NULL, *server_conn = NULL;
-            EXPECT_OK(s2n_get_test_client_and_server(&client_conn, &server_conn, config));
+            DEFER_CLEANUP(struct s2n_test_io_pair io_pair = { 0 }, s2n_io_pair_close);
+            EXPECT_OK(s2n_get_test_client_and_server(&client_conn, &server_conn, &io_pair, config));
 
             EXPECT_OK(s2n_negotiate_test_server_and_client_until_message(server_conn, client_conn,
                     SERVER_KEY));
@@ -86,12 +84,13 @@ int main()
 
             EXPECT_SUCCESS(s2n_connection_free(client_conn));
             EXPECT_SUCCESS(s2n_connection_free(server_conn));
-        }
+        };
 
         /* Can stop on a given message */
         {
             struct s2n_connection *client_conn = NULL, *server_conn = NULL;
-            EXPECT_OK(s2n_get_test_client_and_server(&client_conn, &server_conn, config));
+            DEFER_CLEANUP(struct s2n_test_io_pair io_pair = { 0 }, s2n_io_pair_close);
+            EXPECT_OK(s2n_get_test_client_and_server(&client_conn, &server_conn, &io_pair, config));
 
             EXPECT_OK(s2n_negotiate_test_server_and_client_until_message(server_conn, client_conn,
                     SERVER_CERT_VERIFY));
@@ -100,12 +99,13 @@ int main()
 
             EXPECT_SUCCESS(s2n_connection_free(client_conn));
             EXPECT_SUCCESS(s2n_connection_free(server_conn));
-        }
+        };
 
         /* Can be called repeatedly */
         {
             struct s2n_connection *client_conn = NULL, *server_conn = NULL;
-            EXPECT_OK(s2n_get_test_client_and_server(&client_conn, &server_conn, config));
+            DEFER_CLEANUP(struct s2n_test_io_pair io_pair = { 0 }, s2n_io_pair_close);
+            EXPECT_OK(s2n_get_test_client_and_server(&client_conn, &server_conn, &io_pair, config));
 
             EXPECT_OK(s2n_negotiate_test_server_and_client_until_message(server_conn, client_conn,
                     CLIENT_HELLO));
@@ -139,12 +139,13 @@ int main()
 
             EXPECT_SUCCESS(s2n_connection_free(client_conn));
             EXPECT_SUCCESS(s2n_connection_free(server_conn));
-        }
+        };
 
         /* Can continue as normal after stopping */
         {
             struct s2n_connection *client_conn = NULL, *server_conn = NULL;
-            EXPECT_OK(s2n_get_test_client_and_server(&client_conn, &server_conn, config));
+            DEFER_CLEANUP(struct s2n_test_io_pair io_pair = { 0 }, s2n_io_pair_close);
+            EXPECT_OK(s2n_get_test_client_and_server(&client_conn, &server_conn, &io_pair, config));
 
             EXPECT_OK(s2n_negotiate_test_server_and_client_until_message(server_conn, client_conn,
                     CLIENT_FINISHED));
@@ -157,13 +158,14 @@ int main()
 
             EXPECT_SUCCESS(s2n_connection_free(client_conn));
             EXPECT_SUCCESS(s2n_connection_free(server_conn));
-        }
+        };
 
         /* Can stop on END_OF_EARLY_DATA when using early data, then continue.
          * (This is the non-test use case for this feature) */
         {
             struct s2n_connection *client_conn = NULL, *server_conn = NULL;
-            EXPECT_OK(s2n_get_test_client_and_server(&client_conn, &server_conn, config));
+            DEFER_CLEANUP(struct s2n_test_io_pair io_pair = { 0 }, s2n_io_pair_close);
+            EXPECT_OK(s2n_get_test_client_and_server(&client_conn, &server_conn, &io_pair, config));
 
             EXPECT_SUCCESS(s2n_connection_append_psk(client_conn, test_psk));
             EXPECT_SUCCESS(s2n_connection_append_psk(server_conn, test_psk));
@@ -185,8 +187,8 @@ int main()
 
             EXPECT_SUCCESS(s2n_connection_free(client_conn));
             EXPECT_SUCCESS(s2n_connection_free(server_conn));
-        }
-    }
+        };
+    };
 
     EXPECT_SUCCESS(s2n_config_free(config));
     EXPECT_SUCCESS(s2n_cert_chain_and_key_free(cert_chain));

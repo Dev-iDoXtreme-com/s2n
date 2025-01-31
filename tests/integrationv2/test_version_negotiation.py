@@ -1,9 +1,11 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 import copy
 import pytest
 
 from configuration import available_ports, ALL_TEST_CIPHERS, ALL_TEST_CURVES, ALL_TEST_CERTS
 from common import ProviderOptions, Protocols, data_bytes
-from fixtures import managed_process
+from fixtures import managed_process  # lgtm [py/unused-import]
 from providers import Provider, S2N, OpenSSL, GnuTLS
 from utils import invalid_test_parameters, get_parameter_name, get_expected_s2n_version, get_expected_openssl_version, \
     to_bytes, get_expected_gnutls_version
@@ -77,17 +79,17 @@ def test_s2nc_tls13_negotiates_tls12(managed_process, cipher, curve, certificate
 
     for results in server.get_results():
         results.assert_success()
+        # This check only cares about S2N. Trying to maintain expected output of other providers doesn't add benefit to
+        # whether the S2N client was able to negotiate a lower TLS version.
         if provider is S2N:
-            # The server is only TLS12, so it reads the version from the CLIENT_HELLO, which is never above TLS12
-            # This check only cares about S2N. Trying to maintain expected output of other providers doesn't
-            # add benefit to whether the S2N client was able to negotiate a lower TLS version.
+            # The client sends a TLS 1.3 client hello so a client protocol version of TLS 1.3 should always be expected.
             assert to_bytes("Client protocol version: {}".format(
-                actual_version)) in results.stdout
+                Protocols.TLS13.value)) in results.stdout
             assert to_bytes("Actual protocol version: {}".format(
                 actual_version)) in results.stdout
 
         assert any([
-            random_bytes[1:] in stream 
+            random_bytes[1:] in stream
             for stream in results.output_streams()
         ])
 
@@ -149,11 +151,11 @@ def test_s2nd_tls13_negotiates_tls12(managed_process, cipher, curve, certificate
     for results in server.get_results():
         results.assert_success()
         assert (
-            to_bytes("Server protocol version: {}".format(server_version)) 
+            to_bytes("Server protocol version: {}".format(server_version))
             in results.stdout
         )
         assert (
-            to_bytes("Actual protocol version: {}".format(actual_version)) 
+            to_bytes("Actual protocol version: {}".format(actual_version))
             in results.stdout
         )
         assert random_bytes[1:] in results.stdout

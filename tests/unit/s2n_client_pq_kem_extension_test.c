@@ -13,11 +13,10 @@
  * permissions and limitations under the License.
  */
 
+#include "crypto/s2n_pq.h"
 #include "s2n_test.h"
-
 #include "tls/extensions/s2n_client_pq_kem.h"
 #include "tls/s2n_security_policies.h"
-#include "pq-crypto/s2n_pq.h"
 
 int main(int argc, char **argv)
 {
@@ -25,9 +24,9 @@ int main(int argc, char **argv)
     EXPECT_SUCCESS(s2n_disable_tls13_in_test());
 
     const char *pq_security_policy_versions[] = {
-            "PQ-TLS-1-0-2021-05-24",
-            "PQ-TLS-1-0-2021-05-25",
-            "PQ-TLS-1-0-2021-05-26",
+        "PQ-TLS-1-0-2021-05-24",
+        "PQ-TLS-1-0-2021-05-25",
+        "PQ-TLS-1-0-2021-05-26",
     };
 
     for (size_t policy_index = 0; policy_index < s2n_array_len(pq_security_policy_versions); policy_index++) {
@@ -38,7 +37,7 @@ int main(int argc, char **argv)
 
         /* Test should_send */
         {
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
 
             /* Default cipher preferences do not include PQ, so extension not sent */
@@ -53,27 +52,27 @@ int main(int argc, char **argv)
             }
 
             EXPECT_SUCCESS(s2n_connection_free(conn));
-        }
+        };
 
         /* Test send */
         {
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
             EXPECT_SUCCESS(s2n_connection_set_cipher_preferences(conn, pq_security_policy_version));
 
-            struct s2n_stuffer stuffer;
+            struct s2n_stuffer stuffer = { 0 };
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&stuffer, 0));
 
             EXPECT_SUCCESS(s2n_client_pq_kem_extension.send(conn, &stuffer));
 
             /* Should write correct size */
-            uint16_t size;
+            uint16_t size = 0;
             EXPECT_SUCCESS(s2n_stuffer_read_uint16(&stuffer, &size));
             EXPECT_EQUAL(size, s2n_stuffer_data_available(&stuffer));
             EXPECT_EQUAL(size, kem_preferences->kem_count * sizeof(kem_extension_size));
 
             /* Should write ids */
-            uint16_t actual_id;
+            uint16_t actual_id = 0;
             for (size_t i = 0; i < kem_preferences->kem_count; i++) {
                 POSIX_GUARD(s2n_stuffer_read_uint16(&stuffer, &actual_id));
                 EXPECT_EQUAL(actual_id, kem_preferences->kems[i]->kem_extension_id);
@@ -81,15 +80,15 @@ int main(int argc, char **argv)
 
             EXPECT_SUCCESS(s2n_stuffer_free(&stuffer));
             EXPECT_SUCCESS(s2n_connection_free(conn));
-        }
+        };
 
         /* Test receive - malformed length */
         {
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
             EXPECT_SUCCESS(s2n_connection_set_cipher_preferences(conn, pq_security_policy_version));
 
-            struct s2n_stuffer stuffer;
+            struct s2n_stuffer stuffer = { 0 };
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&stuffer, 0));
 
             EXPECT_SUCCESS(s2n_client_pq_kem_extension.send(conn, &stuffer));
@@ -101,15 +100,15 @@ int main(int argc, char **argv)
 
             EXPECT_SUCCESS(s2n_stuffer_free(&stuffer));
             EXPECT_SUCCESS(s2n_connection_free(conn));
-        }
+        };
 
         /* Test receive */
         {
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
             EXPECT_SUCCESS(s2n_connection_set_cipher_preferences(conn, pq_security_policy_version));
 
-            struct s2n_stuffer stuffer;
+            struct s2n_stuffer stuffer = { 0 };
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&stuffer, 0));
 
             EXPECT_SUCCESS(s2n_client_pq_kem_extension.send(conn, &stuffer));
@@ -117,7 +116,7 @@ int main(int argc, char **argv)
             EXPECT_SUCCESS(s2n_client_pq_kem_extension.recv(conn, &stuffer));
 
             if (s2n_pq_is_enabled()) {
-                EXPECT_EQUAL(conn->kex_params.client_pq_kem_extension.size,kem_preferences->kem_count * sizeof(kem_extension_size));
+                EXPECT_EQUAL(conn->kex_params.client_pq_kem_extension.size, kem_preferences->kem_count * sizeof(kem_extension_size));
                 EXPECT_NOT_NULL(conn->kex_params.client_pq_kem_extension.data);
                 EXPECT_EQUAL(s2n_stuffer_data_available(&stuffer), 0);
             } else {
@@ -128,7 +127,7 @@ int main(int argc, char **argv)
 
             EXPECT_SUCCESS(s2n_stuffer_free(&stuffer));
             EXPECT_SUCCESS(s2n_connection_free(conn));
-        }
+        };
     }
 
     END_TEST();

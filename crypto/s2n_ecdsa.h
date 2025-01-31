@@ -17,27 +17,34 @@
 
 #include <openssl/ecdsa.h>
 #include <stdint.h>
+
 #include "api/s2n.h"
-
-#include "stuffer/s2n_stuffer.h"
-
 #include "crypto/s2n_ecc_evp.h"
 #include "crypto/s2n_hash.h"
-
+#include "stuffer/s2n_stuffer.h"
 #include "utils/s2n_blob.h"
 
 /* Forward declaration to avoid the circular dependency with s2n_pkey.h */
 struct s2n_pkey;
 
 struct s2n_ecdsa_key {
-    EC_KEY *ec_key;
+    /*
+     * Starting in openssl_3, `EVP_PKEY_get1_EC_KEY` and `EVP_PKEY_get0_EC_KEY`
+     * functions return a pre-cached copy of the underlying key. This means that any
+     * mutations are not reflected back onto the underlying key.
+     *
+     * The `const` identifier is present to help ensure that the key is not mutated.
+     * Usecases which require a non-const EC_KEY (some openssl functions), should
+     * use `s2n_unsafe_ecdsa_get_non_const` while ensuring that the usage is safe.
+     */
+    const EC_KEY *ec_key;
 };
 
 typedef struct s2n_ecdsa_key s2n_ecdsa_public_key;
 typedef struct s2n_ecdsa_key s2n_ecdsa_private_key;
 
-extern int s2n_ecdsa_pkey_init(struct s2n_pkey *pkey);
-extern int s2n_ecdsa_pkey_matches_curve(const struct s2n_ecdsa_key *ecdsa_key, const struct s2n_ecc_named_curve *curve);
+S2N_RESULT s2n_ecdsa_pkey_init(struct s2n_pkey *pkey);
+int s2n_ecdsa_pkey_matches_curve(const struct s2n_ecdsa_key *ecdsa_key, const struct s2n_ecc_named_curve *curve);
 
-extern int s2n_evp_pkey_to_ecdsa_public_key(s2n_ecdsa_public_key *ecdsa_key, EVP_PKEY *pkey);
-extern int s2n_evp_pkey_to_ecdsa_private_key(s2n_ecdsa_private_key *ecdsa_key, EVP_PKEY *pkey);
+S2N_RESULT s2n_evp_pkey_to_ecdsa_public_key(s2n_ecdsa_public_key *ecdsa_key, EVP_PKEY *pkey);
+S2N_RESULT s2n_evp_pkey_to_ecdsa_private_key(s2n_ecdsa_private_key *ecdsa_key, EVP_PKEY *pkey);

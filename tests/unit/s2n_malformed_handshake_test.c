@@ -13,24 +13,22 @@
  * permissions and limitations under the License.
  */
 
-#include "s2n_test.h"
-
-#include <sys/wait.h>
-#include <unistd.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "api/s2n.h"
-
+#include "s2n_test.h"
 #include "tls/s2n_connection.h"
 #include "tls/s2n_handshake.h"
 
-#define TLS_ALERT              21
-#define TLS_HANDSHAKE          22
-#define TLS_HEARTBEAT          24
+#define TLS_ALERT     21
+#define TLS_HANDSHAKE 22
+#define TLS_HEARTBEAT 24
 
-#define ZERO_TO_THIRTY_ONE  0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, \
-                            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F
+#define ZERO_TO_THIRTY_ONE 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, \
+                           0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F
 
 static uint8_t zero_to_thirty_one[] = { ZERO_TO_THIRTY_ONE };
 
@@ -146,7 +144,7 @@ static uint8_t good_certificate_list[] = {
 };
 
 static uint8_t empty_certificate_list[] = {
-     /* SERVER CERT */
+    /* SERVER CERT */
     0x0B,
 
     /* Length of the handshake message */
@@ -157,7 +155,7 @@ static uint8_t empty_certificate_list[] = {
 };
 
 static uint8_t empty_certificate[] = {
-     /* SERVER CERT */
+    /* SERVER CERT */
     0x0B,
 
     /* Length of the handshake message */
@@ -171,7 +169,7 @@ static uint8_t empty_certificate[] = {
 };
 
 static uint8_t certificate_list_too_large[] = {
-     /* SERVER CERT */
+    /* SERVER CERT */
     0x0B,
 
     /* Length of the handshake message */
@@ -185,7 +183,7 @@ static uint8_t certificate_list_too_large[] = {
 };
 
 static uint8_t certificate_too_large[] = {
-     /* SERVER CERT */
+    /* SERVER CERT */
     0x0B,
 
     /* Length of the handshake message */
@@ -197,8 +195,6 @@ static uint8_t certificate_too_large[] = {
     /* Length the first certificate */
     0x00, 0x00, 0x10
 };
-
-extern message_type_t s2n_conn_get_current_message_type(struct s2n_connection *conn);
 
 void send_messages(int write_fd, uint8_t *server_hello, uint32_t server_hello_len, uint8_t *server_cert, uint32_t server_cert_len)
 {
@@ -229,18 +225,16 @@ void send_messages(int write_fd, uint8_t *server_hello, uint32_t server_hello_le
 
 int main(int argc, char **argv)
 {
-    struct s2n_connection *conn;
-    struct s2n_config *config;
     s2n_blocked_status blocked;
-    int status;
-    pid_t pid;
+    int status = 0;
+    pid_t pid = 0;
     int p[2];
 
     BEGIN_TEST();
     EXPECT_SUCCESS(s2n_disable_tls13_in_test());
 
-    EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
-    EXPECT_NOT_NULL(config = s2n_config_new());
+    DEFER_CLEANUP(struct s2n_config *config = s2n_config_new(), s2n_config_ptr_free);
+    DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(S2N_CLIENT), s2n_connection_ptr_free);
     EXPECT_SUCCESS(s2n_config_disable_x509_verification(config));
     EXPECT_SUCCESS(s2n_config_set_cipher_preferences(config, "test_all"));
     EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
@@ -272,7 +266,7 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
         EXPECT_SUCCESS(s2n_config_free(config));
-        _exit(0);
+        exit(0);
     }
 
     /* This is the parent process, close the write end of the pipe */
@@ -321,7 +315,7 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
         EXPECT_SUCCESS(s2n_config_free(config));
-        _exit(0);
+        exit(0);
     }
 
     /* This is the parent process, close the write end of the pipe */
@@ -370,7 +364,7 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
         EXPECT_SUCCESS(s2n_config_free(config));
-        _exit(0);
+        exit(0);
     }
 
     /* This is the parent process, close the write end of the pipe */
@@ -419,7 +413,7 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
         EXPECT_SUCCESS(s2n_config_free(config));
-        _exit(0);
+        exit(0);
     }
 
     /* This is the parent process, close the write end of the pipe */
@@ -468,7 +462,7 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
         EXPECT_SUCCESS(s2n_config_free(config));
-        _exit(0);
+        exit(0);
     }
 
     /* This is the parent process, close the write end of the pipe */
@@ -517,7 +511,7 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
         EXPECT_SUCCESS(s2n_config_free(config));
-        _exit(0);
+        exit(0);
     }
 
     /* This is the parent process, close the write end of the pipe */
@@ -538,8 +532,6 @@ int main(int argc, char **argv)
     EXPECT_EQUAL(waitpid(pid, &status, 0), pid);
     EXPECT_EQUAL(status, 0);
     EXPECT_SUCCESS(close(p[0]));
-    EXPECT_SUCCESS(s2n_connection_free(conn));
-    EXPECT_SUCCESS(s2n_config_free(config));
 
     END_TEST();
 }

@@ -29,11 +29,7 @@
 
 static const uint8_t TLS_VERSIONS[] = {S2N_TLS10, S2N_TLS12, S2N_TLS13, S2N_SSLv3};
 
-#ifdef S2N_TEST_IN_FIPS_MODE
-const struct s2n_cipher_preferences *cipher_prefs = &cipher_preferences_test_all_fips;
-#else
 const struct s2n_cipher_preferences *cipher_prefs = &cipher_preferences_test_all;
-#endif
 
 int s2n_fuzz_test(const uint8_t *buf, size_t len)
 {
@@ -49,7 +45,7 @@ int s2n_fuzz_test(const uint8_t *buf, size_t len)
     uint8_t randval = 0;
     POSIX_GUARD(s2n_stuffer_read_uint8(&server_conn->handshake.io, &randval));
     server_conn->actual_protocol_version = TLS_VERSIONS[(randval & 0x03) % s2n_array_len(TLS_VERSIONS)];
-    server_conn->secure.cipher_suite = cipher_prefs->suites[(randval >> 2) % cipher_prefs->count];
+    server_conn->secure->cipher_suite = cipher_prefs->suites[(randval >> 2) % cipher_prefs->count];
 
     /* Run Test
      * Do not use GUARD macro here since the connection memory hasn't been freed.

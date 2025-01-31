@@ -67,20 +67,6 @@ static S2N_RESULT s2n_handshake_hashes_free_hashes(struct s2n_handshake_hashes *
 
 static S2N_RESULT s2n_handshake_hashes_init_hashes(struct s2n_handshake_hashes *hashes)
 {
-    /* Allow MD5 for hash states that are used by the PRF. This is required
-     * to comply with the TLS 1.0 and 1.1 RFCs and is approved as per
-     * NIST Special Publication 800-52 Revision 1.
-     */
-    if (s2n_is_in_fips_mode()) {
-        RESULT_GUARD_POSIX(s2n_hash_allow_md5_for_fips(&hashes->md5));
-
-        /* Do not check s2n_hash_is_available before initialization. Allow MD5 and
-         * SHA-1 for both fips and non-fips mode. This is required to perform the
-         * signature checks in the CertificateVerify message in TLS 1.0 and TLS 1.1.
-         * This is approved per Nist SP 800-52r1.*/
-        RESULT_GUARD_POSIX(s2n_hash_allow_md5_for_fips(&hashes->md5_sha1));
-    }
-
     RESULT_GUARD_POSIX(s2n_hash_init(&hashes->md5, S2N_HASH_MD5));
     RESULT_GUARD_POSIX(s2n_hash_init(&hashes->sha1, S2N_HASH_SHA1));
     RESULT_GUARD_POSIX(s2n_hash_init(&hashes->sha224, S2N_HASH_SHA224));
@@ -101,7 +87,7 @@ S2N_RESULT s2n_handshake_hashes_new(struct s2n_handshake_hashes **hashes)
     DEFER_CLEANUP(struct s2n_blob data = { 0 }, s2n_free);
     RESULT_GUARD_POSIX(s2n_realloc(&data, sizeof(struct s2n_handshake_hashes)));
     RESULT_GUARD_POSIX(s2n_blob_zero(&data));
-    *hashes = (struct s2n_handshake_hashes*)(void*) data.data;
+    *hashes = (struct s2n_handshake_hashes *) (void *) data.data;
     ZERO_TO_DISABLE_DEFER_CLEANUP(data);
 
     RESULT_GUARD(s2n_handshake_hashes_new_hashes(*hashes));
@@ -120,6 +106,6 @@ S2N_CLEANUP_RESULT s2n_handshake_hashes_free(struct s2n_handshake_hashes **hashe
 {
     RESULT_ENSURE_REF(hashes);
     RESULT_GUARD(s2n_handshake_hashes_free_hashes(*hashes));
-    RESULT_GUARD_POSIX(s2n_free_object((uint8_t**) hashes, sizeof(struct s2n_handshake_hashes)));
+    RESULT_GUARD_POSIX(s2n_free_object((uint8_t **) hashes, sizeof(struct s2n_handshake_hashes)));
     return S2N_RESULT_OK;
 }

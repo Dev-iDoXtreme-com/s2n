@@ -13,10 +13,9 @@
  * permissions and limitations under the License.
  */
 
-#include "s2n_test.h"
-
-#include "testlib/s2n_testlib.h"
 #include "api/s2n.h"
+#include "s2n_test.h"
+#include "testlib/s2n_testlib.h"
 
 int main(int argc, char **argv)
 {
@@ -40,7 +39,7 @@ int main(int argc, char **argv)
     /* Verify the cipher info functions work for every cipher suite */
     for (size_t cipher_idx = 0; cipher_idx < cipher_preferences->count; cipher_idx++) {
         struct s2n_cipher_suite *expected_cipher = cipher_preferences->suites[cipher_idx];
-        conn->secure.cipher_suite = expected_cipher;
+        conn->secure->cipher_suite = expected_cipher;
 
         EXPECT_STRING_EQUAL(s2n_connection_get_cipher(conn), expected_cipher->name);
         EXPECT_SUCCESS(s2n_connection_get_cipher_iana_value(conn, &iana_value[0], &iana_value[1]));
@@ -52,4 +51,3 @@ int main(int argc, char **argv)
     END_TEST();
     return S2N_SUCCESS;
 }
-

@@ -16,26 +16,24 @@
 #pragma once
 
 #include <stdint.h>
-#include "api/s2n.h"
 
+#include "api/s2n.h"
+#include "crypto/s2n_certificate.h"
+#include "crypto/s2n_hash.h"
+#include "stuffer/s2n_stuffer.h"
 #include "tls/s2n_crypto.h"
 #include "tls/s2n_handshake_hashes.h"
 #include "tls/s2n_handshake_type.h"
 #include "tls/s2n_signature_algorithms.h"
 #include "tls/s2n_tls_parameters.h"
 
-#include "stuffer/s2n_stuffer.h"
-
-#include "crypto/s2n_certificate.h"
-#include "crypto/s2n_hash.h"
-
 /* From RFC 8446: https://tools.ietf.org/html/rfc8446#appendix-B.3 */
-#define TLS_HELLO_REQUEST              0
-#define TLS_CLIENT_HELLO               1
-#define TLS_SERVER_HELLO               2
-#define TLS_SERVER_NEW_SESSION_TICKET  4
-#define TLS_END_OF_EARLY_DATA          5
-#define TLS_ENCRYPTED_EXTENSIONS       8
+#define TLS_HELLO_REQUEST             0
+#define TLS_CLIENT_HELLO              1
+#define TLS_SERVER_HELLO              2
+#define TLS_SERVER_NEW_SESSION_TICKET 4
+#define TLS_END_OF_EARLY_DATA         5
+#define TLS_ENCRYPTED_EXTENSIONS      8
 #define TLS_CERTIFICATE               11
 #define TLS_SERVER_KEY                12
 #define TLS_CERT_REQ                  13
@@ -46,11 +44,15 @@
 #define TLS_SERVER_CERT_STATUS        22
 #define TLS_SERVER_SESSION_LOOKUP     23
 #define TLS_KEY_UPDATE                24
-#define TLS_MESSAGE_HASH             254
+#define TLS_NPN                       67
+#define TLS_MESSAGE_HASH              254
+
+/* Maximum number of messages in a handshake */
+#define S2N_MAX_HANDSHAKE_LENGTH 32
 
 /* This is the list of message types that we support */
 typedef enum {
-    CLIENT_HELLO=0,
+    CLIENT_HELLO = 0,
     SERVER_HELLO,
     SERVER_CERT,
     SERVER_NEW_SESSION_TICKET,
@@ -62,6 +64,8 @@ typedef enum {
     CLIENT_KEY,
     CLIENT_CERT_VERIFY,
     CLIENT_CHANGE_CIPHER_SPEC,
+    /* Not a standardized message. Defined: https://datatracker.ietf.org/doc/html/draft-agl-tls-nextprotoneg-04 */
+    CLIENT_NPN,
     CLIENT_FINISHED,
     SERVER_CHANGE_CIPHER_SPEC,
     SERVER_FINISHED,
@@ -81,6 +85,18 @@ typedef enum {
     S2N_ASYNC_COMPLETE,
 } s2n_async_state;
 
+/* Indicates which state machine is being used. The handshake
+ * starts off on the initial enum, which indicates we're using
+ * the TLS12 state machine. Once the handshake version is determined
+ * the enum is set to either the TLS12 or TLS13 state machine.
+ * This works because the initial entries in both the TLS12 and 
+ * TLS13 state machines are the same. */
+typedef enum {
+    S2N_STATE_MACHINE_INITIAL = 0,
+    S2N_STATE_MACHINE_TLS12,
+    S2N_STATE_MACHINE_TLS13,
+} s2n_state_machine;
+
 struct s2n_handshake_parameters {
     /* Public keys for server / client */
     struct s2n_pkey server_public_key;
@@ -88,15 +104,17 @@ struct s2n_handshake_parameters {
     struct s2n_blob client_cert_chain;
     s2n_pkey_type client_cert_pkey_type;
 
-    /* Signature/hash algorithm pairs offered by the client in the signature_algorithms extension */
-    struct s2n_sig_scheme_list client_sig_hash_algs;
+    /* Signature/hash algorithm pairs offered by the peer.
+     *
+     * In the case of server connections, this list contains the client's supported signature
+     * schemes offered in the ClientHello. In the case of client connections, this list contains
+     * the server's supported signature schemes offered in the CertificateRequest.
+     */
+    struct s2n_sig_scheme_list peer_sig_scheme_list;
     /* Signature scheme chosen by the server */
-    struct s2n_signature_scheme conn_sig_scheme;
-
-    /* Signature/hash algorithm pairs offered by the server in the certificate request */
-    struct s2n_sig_scheme_list server_sig_hash_algs;
+    const struct s2n_signature_scheme *server_cert_sig_scheme;
     /* Signature scheme chosen by the client */
-    struct s2n_signature_scheme client_cert_sig_scheme;
+    const struct s2n_signature_scheme *client_cert_sig_scheme;
 
     /* The cert chain we will send the peer. */
     struct s2n_cert_chain_and_key *our_chain_and_key;
@@ -142,8 +160,18 @@ struct s2n_handshake {
      */
     uint8_t required_hash_algs[S2N_HASH_SENTINEL];
 
+    /*
+     * Data required by the Finished messages.
+     * In TLS1.2 and earlier, the data is the verify_data.
+     * In TLS1.3, the data is the finished_key used to calculate the verify_data.
+     *
+     * The data will be different for the client and server.
+     * The length of the data will be the same for the client and server.
+     * The length of the data depends on protocol version and cipher suite.
+     */
     uint8_t server_finished[S2N_TLS_SECRET_LEN];
     uint8_t client_finished[S2N_TLS_SECRET_LEN];
+    uint8_t finished_len;
 
     /* Which message-order affecting features are enabled */
     uint32_t handshake_type;
@@ -163,17 +191,22 @@ struct s2n_handshake {
     struct s2n_offered_early_data early_data_async_state;
 
     /* Indicates the CLIENT_HELLO message has been completely received */
-    unsigned client_hello_received:1;
+    unsigned client_hello_received : 1;
 
     /* Indicates the handshake blocked while trying to read or write data, and has been paused */
-    unsigned paused:1;
+    unsigned paused : 1;
 
     /* Set to 1 if the RSA verification failed */
-    unsigned rsa_failed:1;
+    unsigned rsa_failed : 1;
+
+    /* Indicates that this is a renegotiation handshake */
+    unsigned renegotiation : 1;
+
+    s2n_state_machine state_machine;
 };
 
 /* Only used in our test cases. */
-message_type_t s2n_conn_get_current_message_type(struct s2n_connection *conn);
+message_type_t s2n_conn_get_current_message_type(const struct s2n_connection *conn);
 
 /* s2n_handshake */
 int s2n_handshake_require_all_hashes(struct s2n_handshake *handshake);
@@ -186,14 +219,20 @@ int s2n_create_wildcard_hostname(struct s2n_stuffer *hostname, struct s2n_stuffe
 struct s2n_cert_chain_and_key *s2n_get_compatible_cert_chain_and_key(struct s2n_connection *conn, const s2n_pkey_type cert_type);
 S2N_RESULT s2n_negotiate_until_message(struct s2n_connection *conn, s2n_blocked_status *blocked, message_type_t end_message);
 S2N_RESULT s2n_handshake_validate(const struct s2n_handshake *s2n_handshake);
+S2N_RESULT s2n_handshake_set_finished_len(struct s2n_connection *conn, uint8_t len);
+bool s2n_handshake_is_renegotiation(struct s2n_connection *conn);
+S2N_RESULT s2n_handshake_message_send(struct s2n_connection *conn, uint8_t content_type, s2n_blocked_status *blocked);
 
 /* s2n_handshake_io */
 int s2n_conn_set_handshake_type(struct s2n_connection *conn);
 int s2n_conn_set_handshake_no_client_cert(struct s2n_connection *conn);
+S2N_RESULT s2n_conn_choose_state_machine(struct s2n_connection *conn, uint8_t protocol_version);
+bool s2n_handshake_is_complete(struct s2n_connection *conn);
 
 /* s2n_handshake_transcript */
+S2N_RESULT s2n_handshake_transcript_update(struct s2n_connection *conn);
 int s2n_conn_update_handshake_hashes(struct s2n_connection *conn, struct s2n_blob *data);
 
 /* s2n_quic_support */
 S2N_RESULT s2n_quic_read_handshake_message(struct s2n_connection *conn, uint8_t *message_type);
-S2N_RESULT s2n_quic_write_handshake_message(struct s2n_connection *conn, struct s2n_blob *in);
+S2N_RESULT s2n_quic_write_handshake_message(struct s2n_connection *conn);
