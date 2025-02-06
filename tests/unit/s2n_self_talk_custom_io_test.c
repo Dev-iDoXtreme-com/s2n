@@ -13,30 +13,26 @@
  * permissions and limitations under the License.
  */
 
-#include "s2n_test.h"
-
-#include "testlib/s2n_testlib.h"
-
-#include <sys/wait.h>
-#include <unistd.h>
-#include <signal.h>
-#include <stdint.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <signal.h>
+#include <stdint.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "api/s2n.h"
-
-#include "utils/s2n_random.h"
-
+#include "s2n_test.h"
+#include "testlib/s2n_testlib.h"
 #include "tls/s2n_connection.h"
 #include "tls/s2n_handshake.h"
+#include "utils/s2n_random.h"
 
 #define MAX_BUF_SIZE 10000
 
 int mock_client(struct s2n_test_io_pair *io_pair)
 {
-    struct s2n_connection *conn;
-    struct s2n_config *client_config;
+    struct s2n_connection *conn = NULL;
+    struct s2n_config *client_config = NULL;
     s2n_blocked_status blocked;
     int result = 0;
 
@@ -50,7 +46,7 @@ int mock_client(struct s2n_test_io_pair *io_pair)
 
     result = s2n_negotiate(conn, &blocked);
     if (result < 0) {
-        _exit(1);
+        exit(1);
     }
 
     s2n_shutdown(conn, &blocked);
@@ -59,7 +55,7 @@ int mock_client(struct s2n_test_io_pair *io_pair)
     s2n_cleanup();
     s2n_io_pair_close_one_end(io_pair, S2N_CLIENT);
 
-    _exit(0);
+    exit(0);
 }
 
 int main(int argc, char **argv)
@@ -72,28 +68,12 @@ int main(int argc, char **argv)
      * from the stuffers.
      */
     {
-        struct s2n_connection *conn;
-        struct s2n_config *config;
         s2n_blocked_status blocked;
-        int status;
-        pid_t pid;
-        char *cert_chain_pem;
-        char *private_key_pem;
-        char *dhparams_pem;
-        struct s2n_cert_chain_and_key *chain_and_key;
-        struct s2n_stuffer in, out;
-
-        EXPECT_NOT_NULL(config = s2n_config_new());
-        EXPECT_NOT_NULL(cert_chain_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
-        EXPECT_NOT_NULL(private_key_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
-        EXPECT_NOT_NULL(dhparams_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
-        EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_CERT_CHAIN, cert_chain_pem, S2N_MAX_TEST_PEM_SIZE));
-        EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_PRIVATE_KEY, private_key_pem, S2N_MAX_TEST_PEM_SIZE));
-        EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_DHPARAMS, dhparams_pem, S2N_MAX_TEST_PEM_SIZE));
-        EXPECT_NOT_NULL(chain_and_key = s2n_cert_chain_and_key_new());
-        EXPECT_SUCCESS(s2n_cert_chain_and_key_load_pem(chain_and_key, cert_chain_pem, private_key_pem));
-        EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key_to_store(config, chain_and_key));
-        EXPECT_SUCCESS(s2n_config_add_dhparams(config, dhparams_pem));
+        int status = 0;
+        pid_t pid = 0;
+        char *cert_chain_pem = NULL;
+        char *private_key_pem = NULL;
+        char *dhparams_pem = NULL;
 
         /* For convenience, this test will intentionally try to write to closed pipes during shutdown. Ignore the signal to
         * avoid exiting the process on SIGPIPE.
@@ -110,20 +90,32 @@ int main(int argc, char **argv)
             /* This is the client process, close the server end of the pipe */
             EXPECT_SUCCESS(s2n_io_pair_close_one_end(&io_pair, S2N_SERVER));
 
-            /* Free the config */
-            EXPECT_SUCCESS(s2n_config_free(config));
-            free(cert_chain_pem);
-            free(private_key_pem);
-            free(dhparams_pem);
-
             /* Run the client */
             mock_client(&io_pair);
         }
 
+        DEFER_CLEANUP(struct s2n_config *config = s2n_config_new(),
+                s2n_config_ptr_free);
+        DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(S2N_SERVER),
+                s2n_connection_ptr_free);
+        DEFER_CLEANUP(struct s2n_cert_chain_and_key *chain_and_key = s2n_cert_chain_and_key_new(),
+                s2n_cert_chain_and_key_ptr_free);
+        DEFER_CLEANUP(struct s2n_stuffer in, s2n_stuffer_free);
+        DEFER_CLEANUP(struct s2n_stuffer out, s2n_stuffer_free);
+
+        EXPECT_NOT_NULL(cert_chain_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
+        EXPECT_NOT_NULL(private_key_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
+        EXPECT_NOT_NULL(dhparams_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
+        EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_CERT_CHAIN, cert_chain_pem, S2N_MAX_TEST_PEM_SIZE));
+        EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_PRIVATE_KEY, private_key_pem, S2N_MAX_TEST_PEM_SIZE));
+        EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_DHPARAMS, dhparams_pem, S2N_MAX_TEST_PEM_SIZE));
+        EXPECT_SUCCESS(s2n_cert_chain_and_key_load_pem(chain_and_key, cert_chain_pem, private_key_pem));
+        EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key_to_store(config, chain_and_key));
+        EXPECT_SUCCESS(s2n_config_add_dhparams(config, dhparams_pem));
+
         /* This is the server process, close the client end of the pipe */
         EXPECT_SUCCESS(s2n_io_pair_close_one_end(&io_pair, S2N_CLIENT));
 
-        EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
         EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
 
         EXPECT_FAILURE(s2n_connection_use_corked_io(conn));
@@ -139,7 +131,7 @@ int main(int argc, char **argv)
 
         /* Negotiate the handshake. */
         do {
-            int ret;
+            int ret = 0;
 
             ret = s2n_negotiate(conn, &blocked);
             EXPECT_TRUE(ret == 0 || (blocked && (errno == EAGAIN || errno == EWOULDBLOCK)));
@@ -152,9 +144,9 @@ int main(int argc, char **argv)
         } while (blocked);
 
         /* Shutdown after negotiating */
-        uint8_t server_shutdown=0;
+        uint8_t server_shutdown = 0;
         do {
-            int ret;
+            int ret = 0;
 
             ret = s2n_shutdown(conn, &blocked);
             EXPECT_TRUE(ret == 0 || (blocked && (errno == EAGAIN || errno == EWOULDBLOCK)));
@@ -166,20 +158,14 @@ int main(int argc, char **argv)
             s2n_stuffer_send_to_fd(&out, io_pair.server, s2n_stuffer_data_available(&out), NULL);
         } while (!server_shutdown);
 
-        EXPECT_SUCCESS(s2n_connection_free(conn));
-
         /* Clean up */
-        EXPECT_SUCCESS(s2n_stuffer_free(&in));
-        EXPECT_SUCCESS(s2n_stuffer_free(&out));
         EXPECT_EQUAL(waitpid(-1, &status, 0), pid);
         EXPECT_EQUAL(status, 0);
         EXPECT_SUCCESS(s2n_io_pair_close_one_end(&io_pair, S2N_SERVER));
-        EXPECT_SUCCESS(s2n_config_free(config));
-        EXPECT_SUCCESS(s2n_cert_chain_and_key_free(chain_and_key));
         free(cert_chain_pem);
         free(private_key_pem);
         free(dhparams_pem);
-    }
+    };
 
     /* Clients and servers can utilize both custom IO and default IO for their sending and receiving */
     {
@@ -196,7 +182,7 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_config_set_unsafe_for_testing(config_with_certs));
         struct s2n_cert_chain_and_key *chain_and_key = NULL;
         EXPECT_SUCCESS(s2n_test_cert_chain_and_key_new(&chain_and_key, S2N_DEFAULT_ECDSA_TEST_CERT_CHAIN,
-                                                    S2N_DEFAULT_ECDSA_TEST_PRIVATE_KEY));
+                S2N_DEFAULT_ECDSA_TEST_PRIVATE_KEY));
         EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key_to_store(config_with_certs, chain_and_key));
 
         EXPECT_SUCCESS(s2n_connection_set_config(client_conn, config_with_certs));
@@ -225,7 +211,7 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_config_free(config_with_certs));
         EXPECT_SUCCESS(s2n_io_pair_close(&io_pair));
         EXPECT_SUCCESS(s2n_cert_chain_and_key_free(chain_and_key));
-    }
+    };
 
     END_TEST();
 }

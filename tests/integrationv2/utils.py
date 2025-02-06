@@ -1,10 +1,16 @@
-from common import Protocols, Curves, Ciphers
-from providers import S2N, OpenSSL
-from global_flags import get_flag, S2N_FIPS_MODE, S2N_PROVIDER_VERSION
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+from common import Protocols
+from providers import S2N
+from global_flags import get_flag, S2N_FIPS_MODE
 
 
 def to_bytes(val):
     return bytes(str(val).encode('utf-8'))
+
+
+def to_string(val: bytes):
+    return val.decode(encoding="ascii", errors="backslashreplace")
 
 
 def get_expected_s2n_version(protocol, provider):
@@ -63,10 +69,11 @@ def invalid_test_parameters(*args, **kwargs):
     signature = kwargs.get('signature')
 
     providers = [provider_ for provider_ in [provider, other_provider] if provider_]
+    # Always consider S2N
+    providers.append(S2N)
 
-    # Only TLS1.3 supports RSA-PSS-PSS certificates
-    # (Earlier versions support RSA-PSS signatures, just via RSA-PSS-RSAE)
-    if protocol and protocol is not Protocols.TLS13:
+    # Older versions do not support RSA-PSS-PSS certificates
+    if protocol and protocol < Protocols.TLS12:
         if client_certificate and client_certificate.algorithm == 'RSAPSS':
             return True
         if certificate and certificate.algorithm == 'RSAPSS':

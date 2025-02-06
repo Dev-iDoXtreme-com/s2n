@@ -13,44 +13,36 @@
  * permissions and limitations under the License.
  */
 
-#include "s2n_test.h"
-
-#include "testlib/s2n_testlib.h"
-
+#include <fcntl.h>
+#include <stdint.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <stdint.h>
-#include <fcntl.h>
 
 #include "api/s2n.h"
-
-#include "utils/s2n_random.h"
-#include "utils/s2n_safety.h"
-
+#include "s2n_test.h"
+#include "testlib/s2n_testlib.h"
 #include "tls/s2n_connection.h"
 #include "tls/s2n_handshake.h"
 #include "tls/s2n_tls13.h"
+#include "utils/s2n_random.h"
+#include "utils/s2n_safety.h"
 
 static const float minimum_send_percent = 5.0;
-static const uint32_t max_client_run_time = 300;
 
-#define LESS_THAN_ELAPSED_SECONDS(start_time, max_time) ((start_time - time(0)) < max_time)
-#define MIN_PERCENT_COMPLETE(remaining, total) ((((total - remaining)/(total * 1.0)) * 100.0) > minimum_send_percent)
+#define MIN_PERCENT_COMPLETE(remaining, total) ((((total - remaining) / (total * 1.0)) * 100.0) > minimum_send_percent)
 
 int mock_client(struct s2n_test_io_pair *io_pair, uint8_t *expected_data, uint32_t size)
 {
     uint8_t *buffer = malloc(size);
     uint8_t *ptr = buffer;
-    struct s2n_connection *client_conn;
-    struct s2n_config *client_config;
+    struct s2n_connection *client_conn = NULL;
+    struct s2n_config *client_config = NULL;
     s2n_blocked_status blocked;
     int result = 0;
     /* If something goes wrong, and the server never finishes sending,
      * we'll want to have the child process die eventually, or certain
      * CI/CD pipelines might never complete */
     int should_block = 1;
-
-    time_t start_time = time(0);
 
     /* Give the server a chance to listen */
     sleep(1);
@@ -70,7 +62,7 @@ int mock_client(struct s2n_test_io_pair *io_pair, uint8_t *expected_data, uint32
 
     /* Receive 10MB of data */
     uint32_t remaining = size;
-    while(remaining && LESS_THAN_ELAPSED_SECONDS(start_time, max_client_run_time)) {
+    while (remaining) {
         int r = s2n_recv(client_conn, ptr, remaining, &blocked);
         if (r < 0) {
             return 1;
@@ -78,17 +70,17 @@ int mock_client(struct s2n_test_io_pair *io_pair, uint8_t *expected_data, uint32
         remaining -= r;
         ptr += r;
         if (should_block && MIN_PERCENT_COMPLETE(remaining, size)) {
-           raise(SIGSTOP);
-           should_block = 0;
+            raise(SIGSTOP);
+            should_block = 0;
         }
     }
 
-    int shutdown_rc= -1;
+    int shutdown_rc = -1;
     do {
         shutdown_rc = s2n_shutdown(client_conn, &blocked);
-    } while(shutdown_rc != 0 && LESS_THAN_ELAPSED_SECONDS(start_time, max_client_run_time));
+    } while (shutdown_rc != 0);
 
-    for (int i = 0; i < size; i++) {
+    for (size_t i = 0; i < size; i++) {
         if (buffer[i] != expected_data[i]) {
             return 1;
         }
@@ -105,14 +97,12 @@ int mock_client(struct s2n_test_io_pair *io_pair, uint8_t *expected_data, uint32
 
 int mock_client_iov(struct s2n_test_io_pair *io_pair, struct iovec *iov, uint32_t iov_size)
 {
-    struct s2n_connection *client_conn;
-    struct s2n_config *client_config;
+    struct s2n_connection *client_conn = NULL;
+    struct s2n_config *client_config = NULL;
     s2n_blocked_status blocked;
     int result = 0;
-    int total_size = 0, i;
+    int total_size = 0, i = 0;
     int should_block = 1;
-
-    time_t start_time = time(0);
 
     for (i = 0; i < iov_size; i++) {
         total_size += iov[i].iov_len;
@@ -137,7 +127,7 @@ int mock_client_iov(struct s2n_test_io_pair *io_pair, struct iovec *iov, uint32_
     }
 
     uint32_t remaining = total_size;
-    while(remaining && LESS_THAN_ELAPSED_SECONDS(start_time, max_client_run_time)) {
+    while (remaining) {
         int r = s2n_recv(client_conn, &buffer[buffer_offs], remaining, &blocked);
         if (r < 0) {
             return 1;
@@ -145,13 +135,13 @@ int mock_client_iov(struct s2n_test_io_pair *io_pair, struct iovec *iov, uint32_
         remaining -= r;
         buffer_offs += r;
         if (should_block && MIN_PERCENT_COMPLETE(remaining, total_size)) {
-           raise(SIGSTOP);
-           should_block = 0;
+            raise(SIGSTOP);
+            should_block = 0;
         }
     }
 
     remaining = iov[0].iov_len;
-    while(remaining && LESS_THAN_ELAPSED_SECONDS(start_time, max_client_run_time)) {
+    while (remaining) {
         int r = s2n_recv(client_conn, &buffer[buffer_offs], remaining, &blocked);
         if (r < 0) {
             return 1;
@@ -160,10 +150,10 @@ int mock_client_iov(struct s2n_test_io_pair *io_pair, struct iovec *iov, uint32_
         buffer_offs += r;
     }
 
-    int shutdown_rc= -1;
+    int shutdown_rc = -1;
     do {
         shutdown_rc = s2n_shutdown(client_conn, &blocked);
-    } while(shutdown_rc != 0 && LESS_THAN_ELAPSED_SECONDS(start_time, max_client_run_time));
+    } while (shutdown_rc != 0);
 
     for (i = 0, buffer_offs = 0; i < iov_size; i++) {
         if (memcmp(iov[i].iov_base, &buffer[buffer_offs], iov[i].iov_len)) {
@@ -173,7 +163,7 @@ int mock_client_iov(struct s2n_test_io_pair *io_pair, struct iovec *iov, uint32_
     }
 
     if (memcmp(iov[0].iov_base, &buffer[buffer_offs], iov[0].iov_len)) {
-       return 1;
+        return 1;
     }
 
     free(buffer);
@@ -183,37 +173,32 @@ int mock_client_iov(struct s2n_test_io_pair *io_pair, struct iovec *iov, uint32_
     return 0;
 }
 
-char *cert_chain_pem;
-char *private_key_pem;
-char *dhparams_pem;
+S2N_RESULT cleanup_io_data(struct iovec **iov, int iov_size, struct s2n_blob *blob)
+{
+    if (*iov) {
+        for (int i = 0; i < iov_size; i++) {
+            free((*iov)[i].iov_base);
+        }
+        free(*iov);
+    } else {
+        s2n_free(blob);
+    }
+
+    return S2N_RESULT_OK;
+}
 
 int test_send(int use_tls13, int use_iov, int prefer_throughput)
 {
-    struct s2n_connection *conn;
-    struct s2n_config *config;
     s2n_blocked_status blocked;
-    int status;
-    pid_t pid;
-    struct s2n_cert_chain_and_key *chain_and_key;
-
-    EXPECT_NOT_NULL(config = s2n_config_new());
-    EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_ECDSA_TEST_CERT_CHAIN, cert_chain_pem, S2N_MAX_TEST_PEM_SIZE));
-    EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_ECDSA_TEST_PRIVATE_KEY, private_key_pem, S2N_MAX_TEST_PEM_SIZE));
-    EXPECT_NOT_NULL(chain_and_key = s2n_cert_chain_and_key_new());
-    EXPECT_SUCCESS(s2n_cert_chain_and_key_load_pem(chain_and_key, cert_chain_pem, private_key_pem));
-    EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key_to_store(config, chain_and_key));
-    EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_DHPARAMS, dhparams_pem, S2N_MAX_TEST_PEM_SIZE));
-    EXPECT_SUCCESS(s2n_config_add_dhparams(config, dhparams_pem));
-
-    if (use_tls13) {
-        POSIX_GUARD(s2n_config_set_cipher_preferences(config, "test_all"));
-    } else {
-        POSIX_GUARD(s2n_config_set_cipher_preferences(config, "test_all_tls12"));
-    }
+    int status = 0;
+    pid_t pid = 0;
+    char cert_chain_pem[S2N_MAX_TEST_PEM_SIZE];
+    char private_key_pem[S2N_MAX_TEST_PEM_SIZE];
+    char dhparams_pem[S2N_MAX_TEST_PEM_SIZE];
 
     /* Get some random data to send/receive */
     uint32_t data_size = 0;
-    DEFER_CLEANUP(struct s2n_blob blob = {0}, s2n_free);
+    struct s2n_blob blob = { 0 };
 
     /* These numbers are chosen so that some of the payload is bigger
      * than max TLS1.3 record size (2**14 + 1), which is needed to validate
@@ -233,16 +218,16 @@ int test_send(int use_tls13, int use_iov, int prefer_throughput)
      * * 524288 bytes */
     int iov_payload_size = 8192, iov_size = 7;
 
-    struct iovec* iov = NULL;
+    struct iovec *iov = NULL;
     if (!use_iov) {
         data_size = 10000000;
-        s2n_alloc(&blob, data_size);
+        EXPECT_SUCCESS(s2n_alloc(&blob, data_size));
         EXPECT_OK(s2n_get_public_random_data(&blob));
     } else {
         iov = malloc(sizeof(*iov) * iov_size);
         data_size = 0;
         for (int i = 0; i < iov_size; i++, iov_payload_size *= 2) {
-            struct s2n_blob blob_local;
+            struct s2n_blob blob_local = { 0 };
             iov[i].iov_base = blob_local.data = malloc(iov_payload_size);
             iov[i].iov_len = blob_local.size = iov_payload_size;
             EXPECT_OK(s2n_get_public_random_data(&blob));
@@ -261,23 +246,40 @@ int test_send(int use_tls13, int use_iov, int prefer_throughput)
         EXPECT_SUCCESS(s2n_io_pair_close_one_end(&io_pair, S2N_SERVER));
 
         /* Run the client */
-        const int client_rc = !use_iov ? mock_client(&io_pair, blob.data, data_size)
-            : mock_client_iov(&io_pair, iov, iov_size);
+        const int client_rc = !use_iov ? mock_client(&io_pair, blob.data, data_size) : mock_client_iov(&io_pair, iov, iov_size);
 
         EXPECT_SUCCESS(s2n_io_pair_close_one_end(&io_pair, S2N_CLIENT));
-        _exit(client_rc);
+        EXPECT_OK(cleanup_io_data(&iov, iov_size, &blob));
+        exit(client_rc);
+    }
+
+    DEFER_CLEANUP(struct s2n_config *config = s2n_config_new(), s2n_config_ptr_free);
+    DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(S2N_SERVER), s2n_connection_ptr_free);
+    DEFER_CLEANUP(struct s2n_cert_chain_and_key *chain_and_key = s2n_cert_chain_and_key_new(), s2n_cert_chain_and_key_ptr_free);
+
+    EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_ECDSA_TEST_CERT_CHAIN, cert_chain_pem, S2N_MAX_TEST_PEM_SIZE));
+    EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_ECDSA_TEST_PRIVATE_KEY, private_key_pem, S2N_MAX_TEST_PEM_SIZE));
+
+    EXPECT_SUCCESS(s2n_cert_chain_and_key_load_pem(chain_and_key, cert_chain_pem, private_key_pem));
+    EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key_to_store(config, chain_and_key));
+    EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_DHPARAMS, dhparams_pem, S2N_MAX_TEST_PEM_SIZE));
+    EXPECT_SUCCESS(s2n_config_add_dhparams(config, dhparams_pem));
+
+    if (use_tls13) {
+        POSIX_GUARD(s2n_config_set_cipher_preferences(config, "test_all"));
+    } else {
+        POSIX_GUARD(s2n_config_set_cipher_preferences(config, "test_all_tls12"));
     }
 
     /* This is the server process, close the client end of the pipe */
     EXPECT_SUCCESS(s2n_io_pair_close_one_end(&io_pair, S2N_CLIENT));
 
-    EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
     EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
 
     if (prefer_throughput) {
-         EXPECT_SUCCESS(s2n_connection_prefer_throughput(conn));
+        EXPECT_SUCCESS(s2n_connection_prefer_throughput(conn));
     } else {
-         EXPECT_SUCCESS(s2n_connection_prefer_low_latency(conn));
+        EXPECT_SUCCESS(s2n_connection_prefer_low_latency(conn));
     }
 
     /* Set up the connection to read from the fd */
@@ -306,13 +308,13 @@ int test_send(int use_tls13, int use_iov, int prefer_throughput)
 
     while (remaining) {
         int r = !use_iov ? s2n_send(conn, ptr, remaining, &blocked) :
-            s2n_sendv_with_offset(conn, iov, iov_size, iov_offs, &blocked);
+                           s2n_sendv_with_offset(conn, iov, iov_size, iov_offs, &blocked);
         /* We will send up to minimum_send_percent, after which the client will automatically block itself.
          * This allows us to cover the case where s2n_send gets EAGAIN on the very first call
          * which can happen on certain platforms. By making sure we've successfully sent something
          * we can ensure write -> block -> client drain -> write ordering.*/
         if (r < 0 && !MIN_PERCENT_COMPLETE(remaining, data_size)) {
-             continue;
+            continue;
         }
 
         if (r < 0 && blocked == S2N_BLOCKED_ON_WRITE) {
@@ -344,7 +346,7 @@ int test_send(int use_tls13, int use_iov, int prefer_throughput)
     /* Actually send the remaining data */
     while (remaining) {
         int r = !use_iov ? s2n_send(conn, ptr, remaining, &blocked) :
-            s2n_sendv_with_offset(conn, iov, iov_size, iov_offs, &blocked);
+                           s2n_sendv_with_offset(conn, iov, iov_size, iov_offs, &blocked);
         EXPECT_TRUE(r > 0);
         remaining -= r;
         if (!use_iov) {
@@ -360,21 +362,13 @@ int test_send(int use_tls13, int use_iov, int prefer_throughput)
     }
 
     EXPECT_SUCCESS(s2n_shutdown(conn, &blocked));
-    EXPECT_SUCCESS(s2n_connection_free(conn));
 
-    /* Clean up */
     EXPECT_EQUAL(waitpid(-1, &status, 0), pid);
     EXPECT_EQUAL(status, 0);
-    EXPECT_SUCCESS(s2n_config_free(config));
-    EXPECT_SUCCESS(s2n_cert_chain_and_key_free(chain_and_key));
-    EXPECT_SUCCESS(s2n_io_pair_close_one_end(&io_pair, S2N_SERVER));
 
-    if (iov) {
-        for (int i = 0; i < iov_size; i++) {
-            free(iov[i].iov_base);
-        }
-        free(iov);
-    }
+    /* Clean up */
+    EXPECT_OK(cleanup_io_data(&iov, iov_size, &blob));
+    EXPECT_SUCCESS(s2n_io_pair_close_one_end(&io_pair, S2N_SERVER));
 
     return 0;
 }
@@ -385,20 +379,14 @@ int main(int argc, char **argv)
     signal(SIGPIPE, SIG_IGN);
 
     BEGIN_TEST();
-    EXPECT_NOT_NULL(cert_chain_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
-    EXPECT_NOT_NULL(private_key_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
-    EXPECT_NOT_NULL(dhparams_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
 
-    for (int use_tls13 = 0; use_tls13 < 2; use_tls13 ++) {
-        for (int use_iovec = 0; use_iovec < 2; use_iovec ++) {
-            for (int use_throughput = 0; use_throughput < 2; use_throughput ++) {
+    for (int use_tls13 = 0; use_tls13 < 2; use_tls13++) {
+        for (int use_iovec = 0; use_iovec < 2; use_iovec++) {
+            for (int use_throughput = 0; use_throughput < 2; use_throughput++) {
                 test_send(use_tls13, use_iovec, use_throughput);
             }
         }
     }
-    free(cert_chain_pem);
-    free(private_key_pem);
-    free(dhparams_pem);
     END_TEST();
     return 0;
 }

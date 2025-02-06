@@ -15,10 +15,8 @@
 
 #include "crypto/s2n_sequence.h"
 
-#include "tls/s2n_crypto.h"
-
 #include "error/s2n_errno.h"
-
+#include "tls/s2n_crypto.h"
 #include "utils/s2n_blob.h"
 
 #define SEQUENCE_NUMBER_POWER 8
@@ -32,8 +30,7 @@ int s2n_increment_sequence_number(struct s2n_blob *sequence_number)
             break;
         }
 
-        /* RFC 5246 6.1: If a TLS implementation would need to wrap a sequence number, it must
-         * renegotiate instead. We don't support renegotiation. Caller needs to create a new session.
+        /* If a sequence number would exceed the maximum value, then we need to start a new session.
          * This condition is very unlikely. It requires 2^64 - 1 records to be sent.
          */
         S2N_ERROR_IF(i == 0, S2N_ERR_RECORD_LIMIT);
@@ -52,7 +49,7 @@ int s2n_sequence_number_to_uint64(struct s2n_blob *sequence_number, uint64_t *ou
     *output = 0;
 
     for (uint32_t i = sequence_number->size; i > 0; i--) {
-        *output += ((uint64_t) sequence_number->data[i-1]) << shift;
+        *output += ((uint64_t) sequence_number->data[i - 1]) << shift;
         shift += SEQUENCE_NUMBER_POWER;
     }
     return S2N_SUCCESS;

@@ -7,10 +7,39 @@ module s2n_handshake_io where
 // This function models the update of the s2n_connection struct by the
 // s2n_conn_set_handshake_type function in s2n.
 conn_set_handshake_type : connection -> connection
-conn_set_handshake_type conn =
-  if IS_TLS13_HANDSHAKE conn
-  then conn_set_tls13_handshake_type conn
-  else conn_set_pre_tls13_handshake_type conn
+conn_set_handshake_type conn = conn''
+  where conn'' = if IS_TLS13_HANDSHAKE conn'
+                 then conn_set_tls13_handshake_type conn'
+                 else conn_set_pre_tls13_handshake_type conn'
+        conn' = conn_choose_state_machine conn conn.actual_protocol_version
+
+// This function models the state machine choosing by the
+// s2n_conn_choose_state_machine function in s2n.
+conn_choose_state_machine : connection -> [8] -> connection
+conn_choose_state_machine conn protocol_version = conn'
+ where conn' = {handshake = handshake'
+                ,mode = conn.mode
+                ,corked_io = conn.corked_io
+                ,corked = conn.corked
+                ,is_caching_enabled = conn.is_caching_enabled
+                ,resume_from_cache = conn.resume_from_cache
+                ,server_can_send_ocsp = conn.server_can_send_ocsp
+                ,key_exchange_eph = conn.key_exchange_eph
+                ,client_auth_flag = conn.client_auth_flag
+                ,actual_protocol_version = conn.actual_protocol_version
+                ,no_client_cert = conn.no_client_cert
+                ,early_data_state = conn.early_data_state
+                ,chosen_psk_null = conn.chosen_psk_null
+                ,quic_enabled = conn.quic_enabled
+                ,npn_negotiated = conn.npn_negotiated
+                }
+       (handshake' : handshake) = {handshake_type = conn.handshake.handshake_type
+                                  ,message_number = conn.handshake.message_number
+                                  ,state_machine = state_machine'
+                                  }
+       state_machine' = if protocol_version == S2N_TLS13
+                        then S2N_STATE_MACHINE_TLS13
+                        else S2N_STATE_MACHINE_TLS12
 
 // This function models the update of the s2n_connection struct by the
 // s2n_conn_set_handshake_type function in s2n. This only models the
@@ -32,14 +61,19 @@ conn_set_pre_tls13_handshake_type conn = conn'
                 ,early_data_state = conn.early_data_state
                 ,chosen_psk_null = conn.chosen_psk_null
                 ,quic_enabled = conn.quic_enabled
+                ,npn_negotiated = conn.npn_negotiated
                 }
         (handshake' : handshake) = {handshake_type = handshake_type'
                                    ,message_number = conn.handshake.message_number
+                                   ,state_machine = conn.handshake.state_machine
                                    }
-        handshake_type' = NEGOTIATED || full_handshake ||
+        handshake_type' = NEGOTIATED || full_handshake ||  with_npn ||
                             (if (full_handshake != 0) then
                               perfect_forward_secrecy || ocsp_status || client_auth
                               else zero)
+        with_npn = if conn.npn_negotiated
+                   then WITH_NPN
+                   else zero
         full_handshake  = if (conn.is_caching_enabled /\ ~conn.resume_from_cache)
                           then zero
                           else FULL_HANDSHAKE
@@ -71,9 +105,11 @@ conn_set_tls13_handshake_type conn = conn'
                 ,early_data_state = conn.early_data_state
                 ,chosen_psk_null = conn.chosen_psk_null
                 ,quic_enabled = conn.quic_enabled
+                ,npn_negotiated = conn.npn_negotiated
                 }
         (handshake' : handshake) = {handshake_type = handshake_type'
                                    ,message_number = conn.handshake.message_number
+                                   ,state_machine = conn.handshake.state_machine
                                    }
         handshake_type'  = (conn.handshake.handshake_type && (HELLO_RETRY_REQUEST || MIDDLEBOX_COMPAT || EARLY_CLIENT_CCS))
                            || NEGOTIATED || full_handshake || with_early_data || client_auth || middlebox_compat
@@ -108,9 +144,11 @@ advance_message conn = conn2
                 ,early_data_state = conn.early_data_state
                 ,chosen_psk_null = conn.chosen_psk_null
                 ,quic_enabled = conn.quic_enabled
+                ,npn_negotiated = conn.npn_negotiated
                 }
         (handshake2 : handshake) = { handshake_type = conn.handshake.handshake_type,
-                                     message_number = message_number2 }
+                                     message_number = message_number2,
+                                     state_machine = conn.handshake.state_machine }
         cork2 = if (ACTIVE_STATE conn2).writer != (ACTIVE_STATE conn).writer
                 then if (ACTIVE_STATE conn2).writer == mode_writer conn2.mode
                      then s2n_cork conn else s2n_uncork conn
@@ -137,9 +175,11 @@ conn_set_handshake_no_client_cert conn = conn2
                 ,early_data_state = conn.early_data_state
                 ,chosen_psk_null = conn.chosen_psk_null
                 ,quic_enabled = conn.quic_enabled
+                ,npn_negotiated = conn.npn_negotiated
                 }
         (handshake' : handshake) = {handshake_type = handshake_type'
                                    ,message_number = conn.handshake.message_number
+                                   ,state_machine = conn.handshake.state_machine
                                    }
         handshake_type' = if conn.client_auth_flag
                           then conn.handshake.handshake_type || NO_CLIENT_CERT
@@ -215,10 +255,12 @@ type connection = {handshake : handshake
                   ,early_data_state : [32]
                   ,chosen_psk_null : Bit
                   ,quic_enabled : Bit
+                  ,npn_negotiated : Bit
                   }
 
 type handshake = {handshake_type : [32]
                  ,message_number : [32]
+                 ,state_machine : [32]
                  }
 
 type S2N_HANDSHAKES_COUNT = 256
@@ -227,9 +269,9 @@ type S2N_MAX_HANDSHAKE_LENGTH = 32
 // functions model the corresponding macros in C
 
 IS_TLS13_HANDSHAKE : connection -> Bit
-IS_TLS13_HANDSHAKE conn = conn.actual_protocol_version == S2N_TLS13
+IS_TLS13_HANDSHAKE conn = conn.handshake.state_machine == S2N_STATE_MACHINE_TLS13
 
-ACTIVE_STATE_MACHINE : connection -> [20]handshake_action
+ACTIVE_STATE_MACHINE : connection -> [TOTAL_HANDSHAKE_ACTIONS]handshake_action
 ACTIVE_STATE_MACHINE conn = if IS_TLS13_HANDSHAKE conn then tls13_state_machine else state_machine # zero
 
 ACTIVE_HANDSHAKES : connection -> [S2N_HANDSHAKES_COUNT][S2N_MAX_HANDSHAKE_LENGTH][32]
@@ -272,8 +314,8 @@ mkAct : [8] -> [8] -> [8] -> handshake_action
 mkAct r m w = {record_type = r, message_type = m, writer = w}
 
 // A model of the tls1.3 handshake states (array state_machine in C)
-tls13_state_machine : [20]handshake_action
-tls13_state_machine = [tls13_state_machine_fn m | m <- [0..19]]
+tls13_state_machine : [TOTAL_HANDSHAKE_ACTIONS]handshake_action
+tls13_state_machine = [tls13_state_machine_fn m | m <- [0..(TOTAL_HANDSHAKE_ACTIONS-1)]]
 
 // Function that tells a handshake_action for a given tls1.3 state
 tls13_state_machine_fn : [5] -> handshake_action
@@ -296,8 +338,8 @@ tls13_state_machine_fn m =
   else zero
 
 // A model of the handshake states (array state_machine in C)
-state_machine : [20]handshake_action
-state_machine = [state_machine_fn m | m <- [0..19]]
+state_machine : [TOTAL_HANDSHAKE_ACTIONS]handshake_action
+state_machine = [state_machine_fn m | m <- [0..(TOTAL_HANDSHAKE_ACTIONS-1)]]
 
 // Function that tells a handshake_action for a given state
 state_machine_fn : [5] -> handshake_action
@@ -314,6 +356,7 @@ state_machine_fn m =
   else if m == CLIENT_KEY then mkAct TLS_HANDSHAKE TLS_CLIENT_KEY 'C'
   else if m == CLIENT_CERT_VERIFY then mkAct TLS_HANDSHAKE TLS_CERT_VERIFY 'C'
   else if m == CLIENT_CHANGE_CIPHER_SPEC then mkAct TLS_CHANGE_CIPHER_SPEC 0 'C'
+  else if m == CLIENT_NPN then mkAct TLS_HANDSHAKE TLS_NPN 'C'
   else if m == CLIENT_FINISHED then mkAct TLS_HANDSHAKE TLS_FINISHED 'C'
   else if m == SERVER_CHANGE_CIPHER_SPEC then mkAct TLS_CHANGE_CIPHER_SPEC 0 'S'
   else if m == SERVER_FINISHED then mkAct TLS_HANDSHAKE TLS_FINISHED 'S'
@@ -545,10 +588,21 @@ handshakes_fn handshk =
           , SERVER_FINISHED, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED
           , APPLICATION_DATA
           ] # zero else
+  if handshk == (NEGOTIATED || WITH_NPN) 
+    then  [ CLIENT_HELLO, SERVER_HELLO, SERVER_CHANGE_CIPHER_SPEC 
+          , SERVER_FINISHED, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_NPN
+          , CLIENT_FINISHED, APPLICATION_DATA
+          ] # zero else
   if handshk == (NEGOTIATED || WITH_SESSION_TICKET) 
     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_NEW_SESSION_TICKET
          , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED
          , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED
+         , APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || WITH_SESSION_TICKET || WITH_NPN) 
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_NEW_SESSION_TICKET
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED
+         , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_NPN, CLIENT_FINISHED
          , APPLICATION_DATA
          ] # zero else
   if handshk == (NEGOTIATED || FULL_HANDSHAKE) 
@@ -556,16 +610,37 @@ handshakes_fn handshk =
          , CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED
          , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
          ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || WITH_NPN) 
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_HELLO_DONE
+         , CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_NPN
+         , CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED
+         , APPLICATION_DATA
+         ] # zero else
   if handshk == (NEGOTIATED || FULL_HANDSHAKE || WITH_SESSION_TICKET) 
     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_HELLO_DONE
          , CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED
          , SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC
-         , SERVER_FINISHED, APPLICATION_DATA] # zero else
+         , SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || WITH_SESSION_TICKET
+                || WITH_NPN) 
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_HELLO_DONE
+         , CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_NPN
+         , CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
   if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY)
     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_KEY
          , SERVER_HELLO_DONE, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC
          , CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED
          , APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || WITH_NPN)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_KEY
+         , SERVER_HELLO_DONE, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC
+         , CLIENT_NPN, CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC
+         , SERVER_FINISHED, APPLICATION_DATA
          ] # zero else
   if handshk == ( NEGOTIATED || FULL_HANDSHAKE 
                 || PERFECT_FORWARD_SECRECY || WITH_SESSION_TICKET)
@@ -574,11 +649,25 @@ handshakes_fn handshk =
          , CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET
          , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
          ] # zero else
+  if handshk == ( NEGOTIATED || FULL_HANDSHAKE 
+                || PERFECT_FORWARD_SECRECY || WITH_SESSION_TICKET
+                || WITH_NPN)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_KEY
+         , SERVER_HELLO_DONE, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC
+         , CLIENT_NPN, CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
   if handshk == (NEGOTIATED || FULL_HANDSHAKE || OCSP_STATUS) 
     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
          , SERVER_HELLO_DONE, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC
          , CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED
          , APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || OCSP_STATUS || WITH_NPN) 
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+         , SERVER_HELLO_DONE, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC
+         , CLIENT_NPN, CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC
+         , SERVER_FINISHED, APPLICATION_DATA
          ] # zero else
   if handshk == (  NEGOTIATED || OCSP_STATUS || FULL_HANDSHAKE 
                 || WITH_SESSION_TICKET)
@@ -587,114 +676,294 @@ handshakes_fn handshk =
          , CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET
          , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
          ] # zero else
-  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY || OCSP_STATUS) then [CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS,
-    SERVER_KEY, SERVER_HELLO_DONE, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC,
-    CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA] # zero else
-  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY || OCSP_STATUS || WITH_SESSION_TICKET) then [CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS,
-    SERVER_KEY, SERVER_HELLO_DONE, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED, 
-    SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA] # zero else
+  if handshk == (  NEGOTIATED || OCSP_STATUS || FULL_HANDSHAKE 
+                || WITH_SESSION_TICKET || WITH_NPN)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+         , SERVER_HELLO_DONE, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC
+         , CLIENT_NPN, CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || OCSP_STATUS)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+         , SERVER_KEY, SERVER_HELLO_DONE, CLIENT_KEY
+         , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || OCSP_STATUS || WITH_NPN)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+         , SERVER_KEY, SERVER_HELLO_DONE, CLIENT_KEY
+         , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_NPN, CLIENT_FINISHED
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || OCSP_STATUS || WITH_SESSION_TICKET)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+         , SERVER_KEY, SERVER_HELLO_DONE, CLIENT_KEY
+         , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED
+         , SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC
+         , SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || OCSP_STATUS || WITH_SESSION_TICKET || WITH_NPN)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+         , SERVER_KEY, SERVER_HELLO_DONE, CLIENT_KEY
+         , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_NPN, CLIENT_FINISHED
+         , SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC
+         , SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
   if handshk == (NEGOTIATED || FULL_HANDSHAKE || CLIENT_AUTH)
-    then [CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY, CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED,
-            SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED,
-            APPLICATION_DATA] # zero
-  else
-  if handshk == (NEGOTIATED || FULL_HANDSHAKE || CLIENT_AUTH || WITH_SESSION_TICKET)
-    then [CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY, CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED,
-            SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED,
-            APPLICATION_DATA] # zero
-  else
-  if handshk == (NEGOTIATED || FULL_HANDSHAKE || CLIENT_AUTH || NO_CLIENT_CERT)
-  then [CLIENT_HELLO,
-            SERVER_HELLO, SERVER_CERT, SERVER_CERT_REQ, SERVER_HELLO_DONE,
-            CLIENT_CERT, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED,
-            SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED,
-            APPLICATION_DATA] # zero
-  else
-  if handshk == (NEGOTIATED || FULL_HANDSHAKE || CLIENT_AUTH || NO_CLIENT_CERT || WITH_SESSION_TICKET)
-  then [CLIENT_HELLO,
-            SERVER_HELLO, SERVER_CERT, SERVER_CERT_REQ, SERVER_HELLO_DONE,
-            CLIENT_CERT, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED,
-            SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED,
-            APPLICATION_DATA] # zero
-  else
-  if handshk ==  (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY || CLIENT_AUTH) then [            CLIENT_HELLO,
-          SERVER_HELLO, SERVER_CERT, SERVER_KEY, SERVER_CERT_REQ, SERVER_HELLO_DONE,
-          CLIENT_CERT, CLIENT_KEY, CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED,
-          SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED,
-          APPLICATION_DATA] # zero
-  else
-  if handshk ==  (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY || CLIENT_AUTH || WITH_SESSION_TICKET) then [            CLIENT_HELLO,
-          SERVER_HELLO, SERVER_CERT, SERVER_KEY, SERVER_CERT_REQ, SERVER_HELLO_DONE,
-          CLIENT_CERT, CLIENT_KEY, CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED,
-          SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED,
-          APPLICATION_DATA] # zero
-  else
-  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY || CLIENT_AUTH || NO_CLIENT_CERT)
-  then [CLIENT_HELLO,
-          SERVER_HELLO, SERVER_CERT, SERVER_KEY, SERVER_CERT_REQ, SERVER_HELLO_DONE,
-          CLIENT_CERT, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED,
-          SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED,
-          APPLICATION_DATA] # zero
-  else
-  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY || CLIENT_AUTH || NO_CLIENT_CERT || WITH_SESSION_TICKET)
-  then [CLIENT_HELLO,
-          SERVER_HELLO, SERVER_CERT, SERVER_KEY, SERVER_CERT_REQ, SERVER_HELLO_DONE,
-          CLIENT_CERT, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED,
-          SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED,
-          APPLICATION_DATA] # zero
-  else
-  if handshk == (NEGOTIATED || FULL_HANDSHAKE || OCSP_STATUS || CLIENT_AUTH) then [
-            CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS, SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY, CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
-        ] # zero
-  else
-  if handshk == (NEGOTIATED || FULL_HANDSHAKE || OCSP_STATUS || CLIENT_AUTH || WITH_SESSION_TICKET) then [
-            CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS, SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY, CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
-        ] # zero
-  else
-  if handshk == (NEGOTIATED || FULL_HANDSHAKE || OCSP_STATUS || CLIENT_AUTH || NO_CLIENT_CERT)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_REQ
+         , SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY, CLIENT_CERT_VERIFY
+         , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || CLIENT_AUTH || WITH_NPN)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_REQ
+         , SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY, CLIENT_CERT_VERIFY
+         , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_NPN, CLIENT_FINISHED
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || CLIENT_AUTH
+                || NO_CLIENT_CERT)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_REQ
+         , SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+         , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED
+         , APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || CLIENT_AUTH
+                || NO_CLIENT_CERT || WITH_NPN)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_REQ
+         , SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+         , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_NPN, CLIENT_FINISHED
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED
+         , APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || CLIENT_AUTH
+                || WITH_SESSION_TICKET)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_REQ
+         , SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+         , CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC
+         , CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || CLIENT_AUTH
+                || WITH_SESSION_TICKET || WITH_NPN)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_REQ
+         , SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+         , CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC
+         , CLIENT_NPN, CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || CLIENT_AUTH
+                || NO_CLIENT_CERT || WITH_SESSION_TICKET)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_REQ
+         , SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+         , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED
+         , SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC
+         , SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || CLIENT_AUTH
+                || NO_CLIENT_CERT || WITH_SESSION_TICKET || WITH_NPN)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_REQ
+         , SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+         , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_NPN, CLIENT_FINISHED
+         , SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC
+         , SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || CLIENT_AUTH)
+     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_KEY
+          , SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT
+          , CLIENT_KEY, CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC
+          , CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED
+          , APPLICATION_DATA
+          ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || CLIENT_AUTH || WITH_NPN)
+     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_KEY
+          , SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT
+          , CLIENT_KEY, CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC
+          , CLIENT_NPN, CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC
+          , SERVER_FINISHED, APPLICATION_DATA
+          ] # zero else
+  if handshk ==  (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                 || CLIENT_AUTH || WITH_SESSION_TICKET)
+     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_KEY
+          , SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+          , CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED
+          , SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC
+          , SERVER_FINISHED, APPLICATION_DATA
+          ] # zero else
+  if handshk ==  (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                 || CLIENT_AUTH || WITH_SESSION_TICKET || WITH_NPN)
+     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_KEY
+          , SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+          , CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_NPN
+          , CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET
+          , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+          ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || CLIENT_AUTH || NO_CLIENT_CERT)
+     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_KEY
+          , SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+          , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED
+          , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+          ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || CLIENT_AUTH || NO_CLIENT_CERT || WITH_NPN)
+     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_KEY
+          , SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+          , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_NPN, CLIENT_FINISHED
+          , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+          ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || CLIENT_AUTH || NO_CLIENT_CERT || WITH_SESSION_TICKET)
+     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_KEY
+          , SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+          , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED
+          , SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC
+          , SERVER_FINISHED, APPLICATION_DATA
+          ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || CLIENT_AUTH || NO_CLIENT_CERT || WITH_SESSION_TICKET
+                || WITH_NPN)
+     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_KEY
+          , SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+          , CLIENT_CHANGE_CIPHER_SPEC, CLIENT_NPN, CLIENT_FINISHED
+          , SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC
+          , SERVER_FINISHED, APPLICATION_DATA
+          ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || OCSP_STATUS || CLIENT_AUTH)
+     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+          , SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+          , CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED
+          , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+          ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || OCSP_STATUS || CLIENT_AUTH
+                || WITH_NPN)
+     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+          , SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+          , CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_NPN
+          , CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED
+          , APPLICATION_DATA
+          ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || OCSP_STATUS || CLIENT_AUTH
+                || NO_CLIENT_CERT)
     then [  CLIENT_HELLO, SERVER_HELLO, SERVER_CERT
          , SERVER_CERT_STATUS, SERVER_CERT_REQ, SERVER_HELLO_DONE
          , CLIENT_CERT, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC
          , CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED
          , APPLICATION_DATA
-         ] # zero
-  else
-  if handshk == (NEGOTIATED || FULL_HANDSHAKE || OCSP_STATUS || CLIENT_AUTH || NO_CLIENT_CERT || WITH_SESSION_TICKET)
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || OCSP_STATUS || CLIENT_AUTH
+                || NO_CLIENT_CERT || WITH_NPN)
     then [  CLIENT_HELLO, SERVER_HELLO, SERVER_CERT
          , SERVER_CERT_STATUS, SERVER_CERT_REQ, SERVER_HELLO_DONE
          , CLIENT_CERT, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC
-         , CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED
-         , APPLICATION_DATA
-         ] # zero
-  else
-  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY || OCSP_STATUS || CLIENT_AUTH) then
-  [CLIENT_HELLO,
-            SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS, SERVER_KEY, SERVER_CERT_REQ, SERVER_HELLO_DONE,
-            CLIENT_CERT, CLIENT_KEY, CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED,
-            SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED,
-            APPLICATION_DATA] # zero
-  else
-  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY || OCSP_STATUS || CLIENT_AUTH || WITH_SESSION_TICKET) then
-  [CLIENT_HELLO,
-            SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS, SERVER_KEY, SERVER_CERT_REQ, SERVER_HELLO_DONE,
-            CLIENT_CERT, CLIENT_KEY, CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED,
-            SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED,
-            APPLICATION_DATA] # zero
-  else
-  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY || OCSP_STATUS || CLIENT_AUTH || NO_CLIENT_CERT)
+         , CLIENT_NPN, CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC
+         , SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || OCSP_STATUS || CLIENT_AUTH
+                || WITH_SESSION_TICKET)
+     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+          , SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+          , CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED
+          , SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC
+          , SERVER_FINISHED, APPLICATION_DATA
+          ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || OCSP_STATUS || CLIENT_AUTH
+                || WITH_SESSION_TICKET || WITH_NPN)
+     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+          , SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT, CLIENT_KEY
+          , CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC, CLIENT_NPN
+          , CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET
+          , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+          ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || OCSP_STATUS || CLIENT_AUTH
+                || NO_CLIENT_CERT || WITH_SESSION_TICKET)
+    then [  CLIENT_HELLO, SERVER_HELLO, SERVER_CERT
+         , SERVER_CERT_STATUS, SERVER_CERT_REQ, SERVER_HELLO_DONE
+         , CLIENT_CERT, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC
+         , CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC
+         , SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || OCSP_STATUS || CLIENT_AUTH
+                || NO_CLIENT_CERT || WITH_SESSION_TICKET || WITH_NPN)
+    then [  CLIENT_HELLO, SERVER_HELLO, SERVER_CERT
+         , SERVER_CERT_STATUS, SERVER_CERT_REQ, SERVER_HELLO_DONE
+         , CLIENT_CERT, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC
+         , CLIENT_NPN, CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || OCSP_STATUS || CLIENT_AUTH)
+     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+          , SERVER_KEY, SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT
+          , CLIENT_KEY, CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC
+          , CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED
+          , APPLICATION_DATA
+          ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || OCSP_STATUS || CLIENT_AUTH || WITH_NPN)
+     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+          , SERVER_KEY, SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT
+          , CLIENT_KEY, CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC
+          , CLIENT_NPN, CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC
+          , SERVER_FINISHED, APPLICATION_DATA
+          ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || OCSP_STATUS || CLIENT_AUTH || WITH_SESSION_TICKET)
+     then [CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+         , SERVER_KEY, SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT
+         , CLIENT_KEY, CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC
+         , CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || OCSP_STATUS || CLIENT_AUTH || WITH_SESSION_TICKET
+                || WITH_NPN)
+     then [CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+         , SERVER_KEY, SERVER_CERT_REQ, SERVER_HELLO_DONE, CLIENT_CERT
+         , CLIENT_KEY, CLIENT_CERT_VERIFY, CLIENT_CHANGE_CIPHER_SPEC
+         , CLIENT_NPN, CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || OCSP_STATUS || CLIENT_AUTH || NO_CLIENT_CERT)
     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
          , SERVER_KEY, SERVER_CERT_REQ, SERVER_HELLO_DONE
          , CLIENT_CERT, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC
          , CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED
          , APPLICATION_DATA 
-         ] # zero
-  else
-  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY || OCSP_STATUS || CLIENT_AUTH || NO_CLIENT_CERT || WITH_SESSION_TICKET)
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || OCSP_STATUS || CLIENT_AUTH || NO_CLIENT_CERT || WITH_NPN)
     then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
          , SERVER_KEY, SERVER_CERT_REQ, SERVER_HELLO_DONE
          , CLIENT_CERT, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC
-         , CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED
-         , APPLICATION_DATA
+         , CLIENT_NPN, CLIENT_FINISHED, SERVER_CHANGE_CIPHER_SPEC
+         , SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || OCSP_STATUS || CLIENT_AUTH || NO_CLIENT_CERT
+                || WITH_SESSION_TICKET)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+         , SERVER_KEY, SERVER_CERT_REQ, SERVER_HELLO_DONE
+         , CLIENT_CERT, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC
+         , CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET, SERVER_CHANGE_CIPHER_SPEC
+         , SERVER_FINISHED, APPLICATION_DATA
+         ] # zero else
+  if handshk == (NEGOTIATED || FULL_HANDSHAKE || PERFECT_FORWARD_SECRECY
+                || OCSP_STATUS || CLIENT_AUTH || NO_CLIENT_CERT
+                || WITH_SESSION_TICKET || WITH_NPN)
+    then [ CLIENT_HELLO, SERVER_HELLO, SERVER_CERT, SERVER_CERT_STATUS
+         , SERVER_KEY, SERVER_CERT_REQ, SERVER_HELLO_DONE
+         , CLIENT_CERT, CLIENT_KEY, CLIENT_CHANGE_CIPHER_SPEC
+         , CLIENT_NPN, CLIENT_FINISHED, SERVER_NEW_SESSION_TICKET
+         , SERVER_CHANGE_CIPHER_SPEC, SERVER_FINISHED, APPLICATION_DATA
          ] # zero
   else zero
 
@@ -707,8 +976,19 @@ valid_handshake hs = handshakefn != zero /\
                      ((hs.message_number > 0) ==> (handshakefn@(hs.message_number + 1) != 0)) where
                      handshakefn = (handshakes_fn hs.handshake_type)
 
+// A predicate to tell whether a given connection struct is valid
 valid_connection : connection -> Bit
-valid_connection conn = valid_handshake (conn.handshake)
+valid_connection conn = valid_handshake (conn.handshake) /\
+                         // Either conn.handshake.state_machine is S2N_STATE_MACHINE_INITIAL
+                        ((conn.handshake.state_machine == S2N_STATE_MACHINE_INITIAL) \/
+                         // Or conn.actual_protocol_version is less than or equal to S2N_TLS12
+                         //    and conn.hanshake.state_machine has been set to S2N_STATE_MACHINE_TLS12
+                         (conn.actual_protocol_version <= S2N_TLS12 /\
+                          conn.handshake.state_machine == S2N_STATE_MACHINE_TLS12) \/
+                         // Or conn.actual_protocol_version is greater or equal to S2N_TLS13
+                         //    and conn.hanshake.state_machine has been set to S2N_STATE_MACHINE_TLS13
+                         (conn.actual_protocol_version >= S2N_TLS13 /\
+                          conn.handshake.state_machine == S2N_STATE_MACHINE_TLS13))
 
 // Tells if the connection struct is in a valid initial state
 initial_connection : connection -> Bit
@@ -761,6 +1041,8 @@ OCSP_STATUS : [32]
 OCSP_STATUS = zero # 0x20
 WITH_SESSION_TICKET : [32]
 WITH_SESSION_TICKET = zero # 0x40
+WITH_NPN : [32]
+WITH_NPN = zero # 0x80
 
 HELLO_RETRY_REQUEST : [32]
 HELLO_RETRY_REQUEST = zero # 0x10
@@ -790,14 +1072,16 @@ CLIENT_CERT = 8
 CLIENT_KEY = 9
 CLIENT_CERT_VERIFY = 10
 CLIENT_CHANGE_CIPHER_SPEC = 11
-CLIENT_FINISHED = 12
-SERVER_CHANGE_CIPHER_SPEC = 13
-SERVER_FINISHED = 14
-ENCRYPTED_EXTENSIONS = 15
-SERVER_CERT_VERIFY = 16
-HELLO_RETRY_MSG = 17
-END_OF_EARLY_DATA = 18
-APPLICATION_DATA = 19
+CLIENT_NPN = 12
+CLIENT_FINISHED = 13
+SERVER_CHANGE_CIPHER_SPEC = 14
+SERVER_FINISHED = 15
+ENCRYPTED_EXTENSIONS = 16
+SERVER_CERT_VERIFY = 17
+HELLO_RETRY_MSG = 18
+END_OF_EARLY_DATA = 19
+APPLICATION_DATA = 20
+type TOTAL_HANDSHAKE_ACTIONS = 21
 
 //TLS record type
 TLS_CHANGE_CIPHER_SPEC = 20
@@ -820,6 +1104,7 @@ TLS_CERT_VERIFY               = 15
 TLS_CLIENT_KEY                = 16
 TLS_FINISHED                  = 20
 TLS_CERTIFICATE_STATUS        = 22
+TLS_NPN                       = 67
 
 S2N_SERVER = 0
 S2N_CLIENT = 1
@@ -827,6 +1112,12 @@ S2N_CLIENT = 1
 //S2N cert auth types
 S2N_CERT_AUTH_NONE = 0
 S2N_CERT_AUTH_REQUIRED = 1
+S2N_CERT_AUTH_OPTIONAL = 2
 
 //S2N early data states
 S2N_EARLY_DATA_ACCEPTED = 3
+
+// s2n_state_machine version
+S2N_STATE_MACHINE_INITIAL = 0
+S2N_STATE_MACHINE_TLS12 = 1
+S2N_STATE_MACHINE_TLS13 = 2

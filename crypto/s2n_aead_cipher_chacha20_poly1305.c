@@ -17,11 +17,9 @@
 
 #include "crypto/s2n_cipher.h"
 #include "crypto/s2n_openssl.h"
-
 #include "tls/s2n_crypto.h"
-
-#include "utils/s2n_safety.h"
 #include "utils/s2n_blob.h"
+#include "utils/s2n_safety.h"
 
 /* We support two different backing implementations of ChaCha20-Poly1305: one
  * implementation for OpenSSL (>= 1.1.0, see
@@ -31,17 +29,17 @@
  * Note, the order in the if/elif below matters because both BoringSSL and
  * AWS-LC define OPENSSL_VERSION_NUMBER. */
 #if defined(OPENSSL_IS_BORINGSSL) || defined(OPENSSL_IS_AWSLC)
-#define S2N_CHACHA20_POLY1305_AVAILABLE_BSSL_AWSLC
-#elif (S2N_OPENSSL_VERSION_AT_LEAST(1,1,0))
-#define S2N_CHACHA20_POLY1305_AVAILABLE_OSSL
+    #define S2N_CHACHA20_POLY1305_AVAILABLE_BSSL_AWSLC
+#elif (S2N_OPENSSL_VERSION_AT_LEAST(1, 1, 0) && !defined(LIBRESSL_VERSION_NUMBER))
+    #define S2N_CHACHA20_POLY1305_AVAILABLE_OSSL
 #endif
 
-static uint8_t s2n_aead_chacha20_poly1305_available(void)
+static bool s2n_aead_chacha20_poly1305_available(void)
 {
 #if defined(S2N_CHACHA20_POLY1305_AVAILABLE_OSSL) || defined(S2N_CHACHA20_POLY1305_AVAILABLE_BSSL_AWSLC)
-    return 1;
+    return true;
 #else
-    return 0;
+    return false;
 #endif
 }
 
@@ -61,7 +59,8 @@ static int s2n_aead_chacha20_poly1305_encrypt(struct s2n_session_key *key, struc
     int in_len = in->size - S2N_TLS_CHACHA20_POLY1305_TAG_LEN;
     uint8_t *tag_data = out->data + out->size - S2N_TLS_CHACHA20_POLY1305_TAG_LEN;
 
-    int out_len;
+    /* out_len is set by EVP_EncryptUpdate and checked post operation */
+    int out_len = 0;
     /* Specify the AAD */
     POSIX_GUARD_OSSL(EVP_EncryptUpdate(key->evp_cipher_ctx, NULL, &out_len, aad->data, aad->size), S2N_ERR_ENCRYPT);
 
@@ -99,7 +98,10 @@ static int s2n_aead_chacha20_poly1305_decrypt(struct s2n_session_key *key, struc
     /* Set the TAG */
     POSIX_GUARD_OSSL(EVP_CIPHER_CTX_ctrl(key->evp_cipher_ctx, EVP_CTRL_GCM_SET_TAG, S2N_TLS_CHACHA20_POLY1305_TAG_LEN, tag_data), S2N_ERR_DECRYPT);
 
-    int out_len;
+    /* out_len is set by EVP_DecryptUpdate. While we verify the content of out_len in
+     * s2n_aead_chacha20_poly1305_encrypt, we refrain from this here. This is to avoid
+     * doing any branching before the ciphertext is verified. */
+    int out_len = 0;
     /* Specify the AAD */
     POSIX_GUARD_OSSL(EVP_DecryptUpdate(key->evp_cipher_ctx, NULL, &out_len, aad->data, aad->size), S2N_ERR_DECRYPT);
 
@@ -112,49 +114,47 @@ static int s2n_aead_chacha20_poly1305_decrypt(struct s2n_session_key *key, struc
 
     S2N_ERROR_IF(evp_decrypt_rc != 1, S2N_ERR_DECRYPT);
 
-    /* While we verify the content of out_len in s2n_aead_chacha20_poly1305_encrypt, we refrain from this here. This is to avoid doing any branching before the ciphertext is verified. */
-
     return 0;
 }
 
-static int s2n_aead_chacha20_poly1305_set_encryption_key(struct s2n_session_key *key, struct s2n_blob *in)
+static S2N_RESULT s2n_aead_chacha20_poly1305_set_encryption_key(struct s2n_session_key *key, struct s2n_blob *in)
 {
-    POSIX_ENSURE_EQ(in->size, S2N_TLS_CHACHA20_POLY1305_KEY_LEN);
+    RESULT_ENSURE_EQ(in->size, S2N_TLS_CHACHA20_POLY1305_KEY_LEN);
 
-    POSIX_GUARD_OSSL(EVP_EncryptInit_ex(key->evp_cipher_ctx, EVP_chacha20_poly1305(), NULL, NULL, NULL), S2N_ERR_KEY_INIT);
+    RESULT_GUARD_OSSL(EVP_EncryptInit_ex(key->evp_cipher_ctx, EVP_chacha20_poly1305(), NULL, NULL, NULL), S2N_ERR_KEY_INIT);
 
     EVP_CIPHER_CTX_ctrl(key->evp_cipher_ctx, EVP_CTRL_AEAD_SET_IVLEN, S2N_TLS_CHACHA20_POLY1305_IV_LEN, NULL);
 
-    POSIX_GUARD_OSSL(EVP_EncryptInit_ex(key->evp_cipher_ctx, NULL, NULL, in->data, NULL), S2N_ERR_KEY_INIT);
+    RESULT_GUARD_OSSL(EVP_EncryptInit_ex(key->evp_cipher_ctx, NULL, NULL, in->data, NULL), S2N_ERR_KEY_INIT);
 
-    return 0;
+    return S2N_RESULT_OK;
 }
 
-static int s2n_aead_chacha20_poly1305_set_decryption_key(struct s2n_session_key *key, struct s2n_blob *in)
+static S2N_RESULT s2n_aead_chacha20_poly1305_set_decryption_key(struct s2n_session_key *key, struct s2n_blob *in)
 {
-    POSIX_ENSURE_EQ(in->size, S2N_TLS_CHACHA20_POLY1305_KEY_LEN);
+    RESULT_ENSURE_EQ(in->size, S2N_TLS_CHACHA20_POLY1305_KEY_LEN);
 
-    POSIX_GUARD_OSSL(EVP_DecryptInit_ex(key->evp_cipher_ctx, EVP_chacha20_poly1305(), NULL, NULL, NULL), S2N_ERR_KEY_INIT);
+    RESULT_GUARD_OSSL(EVP_DecryptInit_ex(key->evp_cipher_ctx, EVP_chacha20_poly1305(), NULL, NULL, NULL), S2N_ERR_KEY_INIT);
 
     EVP_CIPHER_CTX_ctrl(key->evp_cipher_ctx, EVP_CTRL_AEAD_SET_IVLEN, S2N_TLS_CHACHA20_POLY1305_IV_LEN, NULL);
 
-    POSIX_GUARD_OSSL(EVP_DecryptInit_ex(key->evp_cipher_ctx, NULL, NULL, in->data, NULL), S2N_ERR_KEY_INIT);
+    RESULT_GUARD_OSSL(EVP_DecryptInit_ex(key->evp_cipher_ctx, NULL, NULL, in->data, NULL), S2N_ERR_KEY_INIT);
 
-    return 0;
+    return S2N_RESULT_OK;
 }
 
-static int s2n_aead_chacha20_poly1305_init(struct s2n_session_key *key)
+static S2N_RESULT s2n_aead_chacha20_poly1305_init(struct s2n_session_key *key)
 {
-    s2n_evp_ctx_init(key->evp_cipher_ctx);
+    RESULT_EVP_CTX_INIT(key->evp_cipher_ctx);
 
-    return 0;
+    return S2N_RESULT_OK;
 }
 
-static int s2n_aead_chacha20_poly1305_destroy_key(struct s2n_session_key *key)
+static S2N_RESULT s2n_aead_chacha20_poly1305_destroy_key(struct s2n_session_key *key)
 {
     EVP_CIPHER_CTX_cleanup(key->evp_cipher_ctx);
 
-    return 0;
+    return S2N_RESULT_OK;
 }
 
 #elif defined(S2N_CHACHA20_POLY1305_AVAILABLE_BSSL_AWSLC) /* BoringSSL and AWS-LC implementation */
@@ -168,6 +168,7 @@ static int s2n_aead_chacha20_poly1305_encrypt(struct s2n_session_key *key, struc
 
     /* Adjust input length to account for the Tag length */
     size_t in_len = in->size - S2N_TLS_CHACHA20_POLY1305_TAG_LEN;
+    /* out_len is set by EVP_AEAD_CTX_seal and checked post operation */
     size_t out_len = 0;
 
     POSIX_GUARD_OSSL(EVP_AEAD_CTX_seal(key->evp_aead_ctx, out->data, &out_len, out->size, iv->data, iv->size, in->data, in_len, aad->data, aad->size), S2N_ERR_ENCRYPT);
@@ -183,6 +184,7 @@ static int s2n_aead_chacha20_poly1305_decrypt(struct s2n_session_key *key, struc
     POSIX_ENSURE_GTE(out->size, in->size - S2N_TLS_CHACHA20_POLY1305_TAG_LEN);
     POSIX_ENSURE_EQ(iv->size, S2N_TLS_CHACHA20_POLY1305_IV_LEN);
 
+    /* out_len is set by EVP_AEAD_CTX_open and checked post operation */
     size_t out_len = 0;
 
     POSIX_GUARD_OSSL(EVP_AEAD_CTX_open(key->evp_aead_ctx, out->data, &out_len, out->size, iv->data, iv->size, in->data, in->size, aad->data, aad->size), S2N_ERR_DECRYPT);
@@ -192,36 +194,36 @@ static int s2n_aead_chacha20_poly1305_decrypt(struct s2n_session_key *key, struc
     return 0;
 }
 
-static int s2n_aead_chacha20_poly1305_set_encryption_key(struct s2n_session_key *key, struct s2n_blob *in)
+static S2N_RESULT s2n_aead_chacha20_poly1305_set_encryption_key(struct s2n_session_key *key, struct s2n_blob *in)
 {
-    POSIX_ENSURE_EQ(in->size, S2N_TLS_CHACHA20_POLY1305_KEY_LEN);
+    RESULT_ENSURE_EQ(in->size, S2N_TLS_CHACHA20_POLY1305_KEY_LEN);
 
-    POSIX_GUARD_OSSL(EVP_AEAD_CTX_init(key->evp_aead_ctx, EVP_aead_chacha20_poly1305(), in->data, in->size, S2N_TLS_CHACHA20_POLY1305_TAG_LEN, NULL), S2N_ERR_KEY_INIT);
+    RESULT_GUARD_OSSL(EVP_AEAD_CTX_init(key->evp_aead_ctx, EVP_aead_chacha20_poly1305(), in->data, in->size, S2N_TLS_CHACHA20_POLY1305_TAG_LEN, NULL), S2N_ERR_KEY_INIT);
 
-    return 0;
+    return S2N_RESULT_OK;
 }
 
-static int s2n_aead_chacha20_poly1305_set_decryption_key(struct s2n_session_key *key, struct s2n_blob *in)
+static S2N_RESULT s2n_aead_chacha20_poly1305_set_decryption_key(struct s2n_session_key *key, struct s2n_blob *in)
 {
-    POSIX_ENSURE_EQ(in->size, S2N_TLS_CHACHA20_POLY1305_KEY_LEN);
+    RESULT_ENSURE_EQ(in->size, S2N_TLS_CHACHA20_POLY1305_KEY_LEN);
 
-    POSIX_GUARD_OSSL(EVP_AEAD_CTX_init(key->evp_aead_ctx, EVP_aead_chacha20_poly1305(), in->data, in->size, S2N_TLS_CHACHA20_POLY1305_TAG_LEN, NULL), S2N_ERR_KEY_INIT);
+    RESULT_GUARD_OSSL(EVP_AEAD_CTX_init(key->evp_aead_ctx, EVP_aead_chacha20_poly1305(), in->data, in->size, S2N_TLS_CHACHA20_POLY1305_TAG_LEN, NULL), S2N_ERR_KEY_INIT);
 
-    return 0;
+    return S2N_RESULT_OK;
 }
 
-static int s2n_aead_chacha20_poly1305_init(struct s2n_session_key *key)
+static S2N_RESULT s2n_aead_chacha20_poly1305_init(struct s2n_session_key *key)
 {
     EVP_AEAD_CTX_zero(key->evp_aead_ctx);
 
-    return 0;
+    return S2N_RESULT_OK;
 }
 
-static int s2n_aead_chacha20_poly1305_destroy_key(struct s2n_session_key *key)
+static S2N_RESULT s2n_aead_chacha20_poly1305_destroy_key(struct s2n_session_key *key)
 {
     EVP_AEAD_CTX_cleanup(key->evp_aead_ctx);
 
-    return 0;
+    return S2N_RESULT_OK;
 }
 
 #else /* No ChaCha20-Poly1305 implementation exists for chosen cryptographic provider (E.g Openssl 1.0.x) */
@@ -236,37 +238,37 @@ static int s2n_aead_chacha20_poly1305_decrypt(struct s2n_session_key *key, struc
     POSIX_BAIL(S2N_ERR_DECRYPT);
 }
 
-static int s2n_aead_chacha20_poly1305_set_encryption_key(struct s2n_session_key *key, struct s2n_blob *in)
+static S2N_RESULT s2n_aead_chacha20_poly1305_set_encryption_key(struct s2n_session_key *key, struct s2n_blob *in)
 {
-    POSIX_BAIL(S2N_ERR_KEY_INIT);
+    RESULT_BAIL(S2N_ERR_KEY_INIT);
 }
 
-static int s2n_aead_chacha20_poly1305_set_decryption_key(struct s2n_session_key *key, struct s2n_blob *in)
+static S2N_RESULT s2n_aead_chacha20_poly1305_set_decryption_key(struct s2n_session_key *key, struct s2n_blob *in)
 {
-    POSIX_BAIL(S2N_ERR_KEY_INIT);
+    RESULT_BAIL(S2N_ERR_KEY_INIT);
 }
 
-static int s2n_aead_chacha20_poly1305_init(struct s2n_session_key *key)
+static S2N_RESULT s2n_aead_chacha20_poly1305_init(struct s2n_session_key *key)
 {
-    POSIX_BAIL(S2N_ERR_KEY_INIT);
+    RESULT_BAIL(S2N_ERR_KEY_INIT);
 }
 
-static int s2n_aead_chacha20_poly1305_destroy_key(struct s2n_session_key *key)
+static S2N_RESULT s2n_aead_chacha20_poly1305_destroy_key(struct s2n_session_key *key)
 {
-    POSIX_BAIL(S2N_ERR_KEY_DESTROY);
+    RESULT_BAIL(S2N_ERR_KEY_DESTROY);
 }
 
 #endif
 
-struct s2n_cipher s2n_chacha20_poly1305 = {
+const struct s2n_cipher s2n_chacha20_poly1305 = {
     .key_material_size = S2N_TLS_CHACHA20_POLY1305_KEY_LEN,
     .type = S2N_AEAD,
     .io.aead = {
-                .record_iv_size = S2N_TLS_CHACHA20_POLY1305_EXPLICIT_IV_LEN,
-                .fixed_iv_size = S2N_TLS_CHACHA20_POLY1305_FIXED_IV_LEN,
-                .tag_size = S2N_TLS_CHACHA20_POLY1305_TAG_LEN,
-                .decrypt = s2n_aead_chacha20_poly1305_decrypt,
-                .encrypt = s2n_aead_chacha20_poly1305_encrypt},
+            .record_iv_size = S2N_TLS_CHACHA20_POLY1305_EXPLICIT_IV_LEN,
+            .fixed_iv_size = S2N_TLS_CHACHA20_POLY1305_FIXED_IV_LEN,
+            .tag_size = S2N_TLS_CHACHA20_POLY1305_TAG_LEN,
+            .decrypt = s2n_aead_chacha20_poly1305_decrypt,
+            .encrypt = s2n_aead_chacha20_poly1305_encrypt },
     .is_available = s2n_aead_chacha20_poly1305_available,
     .init = s2n_aead_chacha20_poly1305_init,
     .set_encryption_key = s2n_aead_chacha20_poly1305_set_encryption_key,

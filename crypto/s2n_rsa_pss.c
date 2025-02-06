@@ -13,26 +13,23 @@
  * permissions and limitations under the License.
  */
 
+#include "crypto/s2n_rsa_pss.h"
+
 #include <openssl/evp.h>
 #include <openssl/rsa.h>
 #include <stdint.h>
 
-#include "error/s2n_errno.h"
-
-#include "stuffer/s2n_stuffer.h"
-
 #include "crypto/s2n_evp_signing.h"
 #include "crypto/s2n_hash.h"
 #include "crypto/s2n_openssl.h"
-#include "crypto/s2n_rsa.h"
-#include "crypto/s2n_rsa_pss.h"
-#include "crypto/s2n_rsa_signing.h"
 #include "crypto/s2n_pkey.h"
-
+#include "crypto/s2n_rsa.h"
+#include "crypto/s2n_rsa_signing.h"
+#include "error/s2n_errno.h"
+#include "stuffer/s2n_stuffer.h"
 #include "utils/s2n_blob.h"
 #include "utils/s2n_random.h"
 #include "utils/s2n_safety.h"
-#include "utils/s2n_blob.h"
 
 /* Checks whether PSS Certs is supported */
 int s2n_is_rsa_pss_certs_supported()
@@ -55,7 +52,7 @@ static S2N_RESULT s2n_rsa_pss_size(const struct s2n_pkey *key, uint32_t *size_ou
     return S2N_RESULT_OK;
 }
 
-static int s2n_rsa_is_private_key(RSA *rsa_key)
+static int s2n_rsa_is_private_key(const RSA *rsa_key)
 {
     const BIGNUM *d = NULL;
     RSA_get0_key(rsa_key, NULL, NULL, &d);
@@ -73,7 +70,8 @@ int s2n_rsa_pss_key_sign(const struct s2n_pkey *priv, s2n_signature_algorithm si
     sig_alg_check(sig_alg, S2N_SIGNATURE_RSA_PSS_PSS);
 
     /* Not Possible to Sign with Public Key */
-    S2N_ERROR_IF(!s2n_rsa_is_private_key(priv->key.rsa_key.rsa), S2N_ERR_KEY_MISMATCH);
+    const RSA *key = priv->key.rsa_key.rsa;
+    POSIX_ENSURE(s2n_rsa_is_private_key(key), S2N_ERR_KEY_MISMATCH);
 
     return s2n_rsa_pss_sign(priv, digest, signature_out);
 }
@@ -85,7 +83,8 @@ int s2n_rsa_pss_key_verify(const struct s2n_pkey *pub, s2n_signature_algorithm s
     sig_alg_check(sig_alg, S2N_SIGNATURE_RSA_PSS_PSS);
 
     /* Using Private Key to Verify means the public/private keys were likely swapped, and likely indicates a bug. */
-    S2N_ERROR_IF(s2n_rsa_is_private_key(pub->key.rsa_key.rsa), S2N_ERR_KEY_MISMATCH);
+    const RSA *key = pub->key.rsa_key.rsa;
+    POSIX_ENSURE(!s2n_rsa_is_private_key(key), S2N_ERR_KEY_MISMATCH);
 
     return s2n_rsa_pss_verify(pub, digest, signature_in);
 }
@@ -97,8 +96,8 @@ static int s2n_rsa_pss_validate_sign_verify_match(const struct s2n_pkey *pub, co
     POSIX_GUARD_RESULT(s2n_get_private_random_data(&random_data));
 
     /* Sign/Verify API's only accept Hashes, so hash our Random Data */
-    DEFER_CLEANUP(struct s2n_hash_state sign_hash = {0}, s2n_hash_free);
-    DEFER_CLEANUP(struct s2n_hash_state verify_hash = {0}, s2n_hash_free);
+    DEFER_CLEANUP(struct s2n_hash_state sign_hash = { 0 }, s2n_hash_free);
+    DEFER_CLEANUP(struct s2n_hash_state verify_hash = { 0 }, s2n_hash_free);
     POSIX_GUARD(s2n_hash_new(&sign_hash));
     POSIX_GUARD(s2n_hash_new(&verify_hash));
     POSIX_GUARD(s2n_hash_init(&sign_hash, S2N_HASH_SHA256));
@@ -144,11 +143,11 @@ static int s2n_rsa_validate_params_match(const struct s2n_pkey *pub, const struc
     POSIX_ENSURE_REF(priv);
 
     /* OpenSSL Documentation Links:
-     *  - https://www.openssl.org/docs/manmaster/man3/EVP_PKEY_get0_RSA.html
+     *  - https://www.openssl.org/docs/manmaster/man3/EVP_PKEY_get1_RSA.html
      *  - https://www.openssl.org/docs/manmaster/man3/RSA_get0_key.html
      */
-    RSA *pub_rsa_key = pub->key.rsa_key.rsa;
-    RSA *priv_rsa_key = priv->key.rsa_key.rsa;
+    const RSA *pub_rsa_key = pub->key.rsa_key.rsa;
+    const RSA *priv_rsa_key = priv->key.rsa_key.rsa;
 
     POSIX_ENSURE_REF(pub_rsa_key);
     POSIX_ENSURE_REF(priv_rsa_key);
@@ -157,7 +156,6 @@ static int s2n_rsa_validate_params_match(const struct s2n_pkey *pub, const struc
 
     return 0;
 }
-
 
 static int s2n_rsa_pss_keys_match(const struct s2n_pkey *pub, const struct s2n_pkey *priv)
 {
@@ -176,41 +174,50 @@ static int s2n_rsa_pss_keys_match(const struct s2n_pkey *pub, const struct s2n_p
 
 static int s2n_rsa_pss_key_free(struct s2n_pkey *pkey)
 {
-    /* This object does not own the reference to the key --
-     * s2n_pkey handles it. */
+    POSIX_ENSURE_REF(pkey);
+    struct s2n_rsa_key *rsa_key = &pkey->key.rsa_key;
+    if (rsa_key->rsa == NULL) {
+        return S2N_SUCCESS;
+    }
 
-    return 0;
+    /* Safety: freeing the key owned by this object */
+    RSA_free(s2n_unsafe_rsa_get_non_const(rsa_key));
+    rsa_key->rsa = NULL;
+
+    return S2N_SUCCESS;
 }
 
-int s2n_evp_pkey_to_rsa_pss_public_key(struct s2n_rsa_key *rsa_key, EVP_PKEY *pkey) {
-    RSA *pub_rsa_key = EVP_PKEY_get0_RSA(pkey);
+S2N_RESULT s2n_evp_pkey_to_rsa_pss_public_key(struct s2n_rsa_key *rsa_key, EVP_PKEY *pkey)
+{
+    const RSA *pub_rsa_key = EVP_PKEY_get1_RSA(pkey);
+    RESULT_ENSURE_REF(pub_rsa_key);
 
-    S2N_ERROR_IF(s2n_rsa_is_private_key(pub_rsa_key), S2N_ERR_KEY_MISMATCH);
+    RESULT_ENSURE(!s2n_rsa_is_private_key(pub_rsa_key), S2N_ERR_KEY_MISMATCH);
 
     rsa_key->rsa = pub_rsa_key;
-    return 0;
+    return S2N_RESULT_OK;
 }
 
-int s2n_evp_pkey_to_rsa_pss_private_key(struct s2n_rsa_key *rsa_key, EVP_PKEY *pkey)
+S2N_RESULT s2n_evp_pkey_to_rsa_pss_private_key(struct s2n_rsa_key *rsa_key, EVP_PKEY *pkey)
 {
-    RSA *priv_rsa_key = EVP_PKEY_get0_RSA(pkey);
-    POSIX_ENSURE_REF(priv_rsa_key);
+    const RSA *priv_rsa_key = EVP_PKEY_get1_RSA(pkey);
+    RESULT_ENSURE_REF(priv_rsa_key);
 
     /* Documentation: https://www.openssl.org/docs/man1.1.1/man3/RSA_check_key.html */
-    S2N_ERROR_IF(!s2n_rsa_is_private_key(priv_rsa_key), S2N_ERR_KEY_MISMATCH);
+    RESULT_ENSURE(s2n_rsa_is_private_key(priv_rsa_key), S2N_ERR_KEY_MISMATCH);
 
     /* Check that the mandatory properties of a RSA Private Key are valid.
      *  - Documentation: https://www.openssl.org/docs/man1.1.1/man3/RSA_check_key.html
      */
-    POSIX_GUARD_OSSL(RSA_check_key(priv_rsa_key), S2N_ERR_KEY_CHECK);
+    RESULT_GUARD_OSSL(RSA_check_key(priv_rsa_key), S2N_ERR_KEY_CHECK);
 
     rsa_key->rsa = priv_rsa_key;
-    return 0;
+    return S2N_RESULT_OK;
 }
 
-int s2n_rsa_pss_pkey_init(struct s2n_pkey *pkey)
+S2N_RESULT s2n_rsa_pss_pkey_init(struct s2n_pkey *pkey)
 {
-    POSIX_GUARD(s2n_rsa_pkey_init(pkey));
+    RESULT_GUARD(s2n_rsa_pkey_init(pkey));
 
     pkey->size = &s2n_rsa_pss_size;
     pkey->sign = &s2n_rsa_pss_key_sign;
@@ -224,25 +231,25 @@ int s2n_rsa_pss_pkey_init(struct s2n_pkey *pkey)
     pkey->match = &s2n_rsa_pss_keys_match;
     pkey->free = &s2n_rsa_pss_key_free;
 
-    POSIX_GUARD_RESULT(s2n_evp_signing_set_pkey_overrides(pkey));
-    return 0;
+    RESULT_GUARD(s2n_evp_signing_set_pkey_overrides(pkey));
+    return S2N_RESULT_OK;
 }
 
 #else
 
-int s2n_evp_pkey_to_rsa_pss_public_key(struct s2n_rsa_key *rsa_pss_key, EVP_PKEY *pkey)
+S2N_RESULT s2n_evp_pkey_to_rsa_pss_public_key(struct s2n_rsa_key *rsa_pss_key, EVP_PKEY *pkey)
 {
-    POSIX_BAIL(S2N_RSA_PSS_NOT_SUPPORTED);
+    RESULT_BAIL(S2N_ERR_RSA_PSS_NOT_SUPPORTED);
 }
 
-int s2n_evp_pkey_to_rsa_pss_private_key(struct s2n_rsa_key *rsa_pss_key, EVP_PKEY *pkey)
+S2N_RESULT s2n_evp_pkey_to_rsa_pss_private_key(struct s2n_rsa_key *rsa_pss_key, EVP_PKEY *pkey)
 {
-    POSIX_BAIL(S2N_RSA_PSS_NOT_SUPPORTED);
+    RESULT_BAIL(S2N_ERR_RSA_PSS_NOT_SUPPORTED);
 }
 
-int s2n_rsa_pss_pkey_init(struct s2n_pkey *pkey)
+S2N_RESULT s2n_rsa_pss_pkey_init(struct s2n_pkey *pkey)
 {
-    POSIX_BAIL(S2N_RSA_PSS_NOT_SUPPORTED);
+    RESULT_BAIL(S2N_ERR_RSA_PSS_NOT_SUPPORTED);
 }
 
 #endif

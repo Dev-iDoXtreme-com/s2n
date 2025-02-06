@@ -18,11 +18,9 @@
 
 #include "s2n_test.h"
 #include "testlib/s2n_testlib.h"
-
+#include "tls/s2n_cipher_suites.h"
 #include "tls/s2n_tls13_key_schedule.h"
 #include "tls/s2n_tls13_secrets.h"
-
-#include "tls/s2n_cipher_suites.h"
 
 struct s2n_cipher_suite *cipher_suite = &s2n_tls13_aes_128_gcm_sha256;
 const struct s2n_ecc_named_curve *curve = &s2n_ecc_curve_x25519;
@@ -51,11 +49,11 @@ int main(int argc, char **argv)
      */
     {
         /**
-         *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+         *= https://www.rfc-editor.org/rfc/rfc8448#section-3
          *= type=test
          *#    {client}  extract secret "early" (same as server early secret)
          *
-         *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+         *= https://www.rfc-editor.org/rfc/rfc8448#section-3
          *= type=test
          *#    {server}  extract secret "early":
          *#
@@ -74,22 +72,22 @@ int main(int argc, char **argv)
         {
             for (size_t i = 0; i < s2n_array_len(modes); i++) {
                 DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(modes[i]), s2n_connection_ptr_free);
-                conn->secure.cipher_suite = cipher_suite;
+                conn->secure->cipher_suite = cipher_suite;
 
                 EXPECT_OK(s2n_tls13_extract_secret(conn, S2N_EARLY_SECRET));
-                EXPECT_BYTEARRAY_EQUAL(conn->secrets.tls13.extract_secret,
+                EXPECT_BYTEARRAY_EQUAL(conn->secrets.version.tls13.extract_secret,
                         early_secret.data, early_secret.size);
-                EXPECT_EQUAL(conn->secrets.tls13.extract_secret_type, S2N_EARLY_SECRET);
+                EXPECT_EQUAL(conn->secrets.extract_secret_type, S2N_EARLY_SECRET);
             }
-        }
+        };
 
         /**
-         *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+         *= https://www.rfc-editor.org/rfc/rfc8448#section-3
          *= type=test
          *#    {client}  extract secret "handshake" (same as server handshake
          *# secret)
          *
-         *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+         *= https://www.rfc-editor.org/rfc/rfc8448#section-3
          *= type=test
          *#    {server}  extract secret "handshake":
          *#
@@ -115,7 +113,7 @@ int main(int argc, char **argv)
             const int openssl_type = EVP_PKEY_X25519;
 
             /**
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {client}  create an ephemeral x25519 key pair:
              *#
@@ -131,7 +129,7 @@ int main(int argc, char **argv)
                    ba fe b3 c0 6e 51 c1 3c ae 4d 54 13 69 1e 52 9a af 2c");
 
             /**
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {server}  create an ephemeral x25519 key pair:
              *#
@@ -149,64 +147,64 @@ int main(int argc, char **argv)
             /* Server */
             {
                 DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(S2N_SERVER), s2n_connection_ptr_free);
-                conn->secure.cipher_suite = cipher_suite;
+                conn->secure->cipher_suite = cipher_suite;
                 EXPECT_OK(s2n_connection_set_test_early_secret(conn, &early_secret));
 
                 conn->kex_params.server_ecc_evp_params.negotiated_curve = curve;
                 conn->kex_params.server_ecc_evp_params.evp_pkey = EVP_PKEY_new_raw_private_key(
-                        openssl_type, NULL, (unsigned char*) server_priv.data, server_priv.size);
+                        openssl_type, NULL, (unsigned char *) server_priv.data, server_priv.size);
                 EXPECT_NOT_NULL(conn->kex_params.server_ecc_evp_params.evp_pkey);
 
                 conn->kex_params.client_ecc_evp_params.negotiated_curve = curve;
                 conn->kex_params.client_ecc_evp_params.evp_pkey = EVP_PKEY_new_raw_public_key(
-                        openssl_type, NULL, (unsigned char*) client_pub.data, client_pub.size);
+                        openssl_type, NULL, (unsigned char *) client_pub.data, client_pub.size);
                 EXPECT_NOT_NULL(conn->kex_params.client_ecc_evp_params.evp_pkey);
 
                 EXPECT_OK(s2n_tls13_extract_secret(conn, S2N_HANDSHAKE_SECRET));
-                EXPECT_BYTEARRAY_EQUAL(conn->secrets.tls13.extract_secret,
+                EXPECT_BYTEARRAY_EQUAL(conn->secrets.version.tls13.extract_secret,
                         handshake_secret.data, handshake_secret.size);
-                EXPECT_EQUAL(conn->secrets.tls13.extract_secret_type, S2N_HANDSHAKE_SECRET);
-            }
+                EXPECT_EQUAL(conn->secrets.extract_secret_type, S2N_HANDSHAKE_SECRET);
+            };
 
             /* Client */
             {
                 DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(S2N_CLIENT), s2n_connection_ptr_free);
-                conn->secure.cipher_suite = cipher_suite;
+                conn->secure->cipher_suite = cipher_suite;
                 EXPECT_OK(s2n_connection_set_test_early_secret(conn, &early_secret));
 
                 conn->kex_params.server_ecc_evp_params.negotiated_curve = curve;
                 conn->kex_params.server_ecc_evp_params.evp_pkey = EVP_PKEY_new_raw_public_key(
-                        openssl_type, NULL, (unsigned char*) server_pub.data, server_pub.size);
+                        openssl_type, NULL, (unsigned char *) server_pub.data, server_pub.size);
                 EXPECT_NOT_NULL(conn->kex_params.server_ecc_evp_params.evp_pkey);
 
                 conn->kex_params.client_ecc_evp_params.negotiated_curve = curve;
                 conn->kex_params.client_ecc_evp_params.evp_pkey = EVP_PKEY_new_raw_private_key(
-                        openssl_type, NULL, (unsigned char*) client_priv.data, client_priv.size);
+                        openssl_type, NULL, (unsigned char *) client_priv.data, client_priv.size);
                 EXPECT_NOT_NULL(conn->kex_params.client_ecc_evp_params.evp_pkey);
 
                 EXPECT_OK(s2n_tls13_extract_secret(conn, S2N_HANDSHAKE_SECRET));
-                EXPECT_BYTEARRAY_EQUAL(conn->secrets.tls13.extract_secret,
+                EXPECT_BYTEARRAY_EQUAL(conn->secrets.version.tls13.extract_secret,
                         handshake_secret.data, handshake_secret.size);
-                EXPECT_EQUAL(conn->secrets.tls13.extract_secret_type, S2N_HANDSHAKE_SECRET);
-            }
+                EXPECT_EQUAL(conn->secrets.extract_secret_type, S2N_HANDSHAKE_SECRET);
+            };
         }
 #endif
 
         /* Derive S2N_CLIENT_HANDSHAKE_TRAFFIC_SECRET */
         {
             /**
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {client}  derive secret "tls13 c hs traffic" (same as server)
              *
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {server}  derive secret "tls13 c hs traffic":
              *#
              *#       PRK (32 octets):  1d c8 26 e9 36 06 aa 6f dc 0a ad c1 2f 74 1b 01
              *#          04 6a a6 b9 9f 69 1e d2 21 a9 f0 ca 04 3f be ac
              **
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#       hash (32 octets):  86 0c 06 ed c0 78 58 ee 8e 78 f0 e7 42 8c 58 ed
              *#          d6 b4 3f 2c a3 e6 e9 5f 02 ed 06 3c f0 e1 ca d8
@@ -224,18 +222,18 @@ int main(int argc, char **argv)
                          2d 8f 3b 1a 95 07 38 f5 2e 96 00 74 6a 0e 27 a5 5a 21");
 
             /**
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {client}  calculate finished "tls13 finished" (same as server)
              *
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {client}  calculate finished "tls13 finished":
              *#
              *#       PRK (32 octets):  b3 ed db 12 6e 06 7f 35 a7 80 b3 ab f4 5e 2d 8f
              *#          3b 1a 95 07 38 f5 2e 96 00 74 6a 0e 27 a5 5a 21
              **
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#       hash (0 octets):  (empty)
              *#
@@ -250,7 +248,7 @@ int main(int argc, char **argv)
 
             for (size_t i = 0; i < s2n_array_len(modes); i++) {
                 DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(modes[i]), s2n_connection_ptr_free);
-                conn->secure.cipher_suite = cipher_suite;
+                conn->secure->cipher_suite = cipher_suite;
                 EXPECT_OK(s2n_connection_set_test_handshake_secret(conn, &handshake_secret));
                 EXPECT_OK(s2n_connection_set_test_transcript_hash(conn, SERVER_HELLO, &hash));
 
@@ -262,16 +260,16 @@ int main(int argc, char **argv)
                 EXPECT_BYTEARRAY_EQUAL(conn->handshake.client_finished,
                         finished_key.data, finished_key.size);
             }
-        }
+        };
 
         /* Derive S2N_SERVER_HANDSHAKE_TRAFFIC_SECRET */
         {
             /**
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {client}  derive secret "tls13 s hs traffic" (same as server)
              *
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {server}  derive secret "tls13 s hs traffic":
              *#
@@ -294,11 +292,11 @@ int main(int argc, char **argv)
                          37 b4 e9 c9 12 bc de d9 10 5d 42 be fd 59 d3 91 ad 38");
 
             /**
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {client}  calculate finished "tls13 finished" (same as server)
              *
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {server}  calculate finished "tls13 finished":
              *#
@@ -318,7 +316,7 @@ int main(int argc, char **argv)
 
             for (size_t i = 0; i < s2n_array_len(modes); i++) {
                 DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(modes[i]), s2n_connection_ptr_free);
-                conn->secure.cipher_suite = cipher_suite;
+                conn->secure->cipher_suite = cipher_suite;
                 EXPECT_OK(s2n_connection_set_test_handshake_secret(conn, &handshake_secret));
                 EXPECT_OK(s2n_connection_set_test_transcript_hash(conn, SERVER_HELLO, &hash));
 
@@ -329,14 +327,14 @@ int main(int argc, char **argv)
                 EXPECT_BYTEARRAY_EQUAL(conn->handshake.server_finished,
                         finished_key.data, finished_key.size);
             }
-        }
+        };
 
         /**
-         *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+         *= https://www.rfc-editor.org/rfc/rfc8448#section-3
          *= type=test
          *#    {client}  extract secret "master" (same as server master secret)
          *
-         *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+         *= https://www.rfc-editor.org/rfc/rfc8448#section-3
          *= type=test
          *#    {server}  extract secret "master":
          *#
@@ -346,7 +344,7 @@ int main(int argc, char **argv)
          *#       IKM (32 octets):  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
          *#          00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
          **
-         *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+         *= https://www.rfc-editor.org/rfc/rfc8448#section-3
          *= type=test
          *#       secret (32 octets):  18 df 06 84 3d 13 a0 8b f2 a4 49 84 4c 5f 8a
          *#          47 80 01 bc 4d 4c 62 79 84 d5 a4 1d a8 d0 40 29 19
@@ -360,24 +358,24 @@ int main(int argc, char **argv)
         {
             for (size_t i = 0; i < s2n_array_len(modes); i++) {
                 DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(modes[i]), s2n_connection_ptr_free);
-                conn->secure.cipher_suite = cipher_suite;
+                conn->secure->cipher_suite = cipher_suite;
                 EXPECT_OK(s2n_connection_set_test_handshake_secret(conn, &handshake_secret));
 
                 EXPECT_OK(s2n_tls13_extract_secret(conn, S2N_MASTER_SECRET));
-                EXPECT_BYTEARRAY_EQUAL(conn->secrets.tls13.extract_secret,
+                EXPECT_BYTEARRAY_EQUAL(conn->secrets.version.tls13.extract_secret,
                         master_secret.data, master_secret.size);
-                EXPECT_EQUAL(conn->secrets.tls13.extract_secret_type, S2N_MASTER_SECRET);
+                EXPECT_EQUAL(conn->secrets.extract_secret_type, S2N_MASTER_SECRET);
             }
-        }
+        };
 
         /* Derive CLIENT_APPLICATION_TRAFFIC_SECRET_0 */
         {
             /**
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {client}  derive secret "tls13 c ap traffic" (same as server)
              *
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {server}  derive secret "tls13 c ap traffic":
              *#
@@ -401,7 +399,7 @@ int main(int argc, char **argv)
 
             for (size_t i = 0; i < s2n_array_len(modes); i++) {
                 DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(modes[i]), s2n_connection_ptr_free);
-                conn->secure.cipher_suite = cipher_suite;
+                conn->secure->cipher_suite = cipher_suite;
                 EXPECT_OK(s2n_connection_set_test_master_secret(conn, &master_secret));
                 EXPECT_OK(s2n_connection_set_test_transcript_hash(conn, SERVER_FINISHED, &hash));
 
@@ -410,16 +408,16 @@ int main(int argc, char **argv)
                 EXPECT_EQUAL(derived_secret.size, secret.size);
                 EXPECT_BYTEARRAY_EQUAL(derived_secret.data, secret.data, secret.size);
             }
-        }
+        };
 
         /* Derive SERVER_APPLICATION_TRAFFIC_SECRET_0 */
         {
             /**
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {client}  derive secret "tls13 s ap traffic" (same as server)
              *
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {server}  derive secret "tls13 s ap traffic":
              *#
@@ -433,7 +431,7 @@ int main(int argc, char **argv)
              *#          61 66 66 69 63 20 96 08 10 2a 0f 1c cc 6d b6 25 0b 7b 7e 41 7b
              *#          1a 00 0e aa da 3d aa e4 77 7a 76 86 c9 ff 83 df 13
              **
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#       expanded (32 octets):  a1 1a f9 f0 55 31 f8 56 ad 47 11 6b 45 a9
              *#          50 32 82 04 b4 f4 4b fb 6b 3a 4b 4f 1f 3f cb 63 16 43
@@ -445,7 +443,7 @@ int main(int argc, char **argv)
 
             for (size_t i = 0; i < s2n_array_len(modes); i++) {
                 DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(modes[i]), s2n_connection_ptr_free);
-                conn->secure.cipher_suite = cipher_suite;
+                conn->secure->cipher_suite = cipher_suite;
                 EXPECT_OK(s2n_connection_set_test_master_secret(conn, &master_secret));
                 EXPECT_OK(s2n_connection_set_test_transcript_hash(conn, SERVER_FINISHED, &hash));
 
@@ -455,16 +453,16 @@ int main(int argc, char **argv)
                 EXPECT_EQUAL(derived_secret.size, secret.size);
                 EXPECT_BYTEARRAY_EQUAL(derived_secret.data, secret.data, secret.size);
             }
-        }
+        };
 
         /* Derive RESUMPTION_MASTER_SECRET */
         {
             /**
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {server}  derive secret "tls13 res master" (same as client)
              *
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#    {client}  derive secret "tls13 res master":
              *#
@@ -474,7 +472,7 @@ int main(int argc, char **argv)
              *#       hash (32 octets):  20 91 45 a9 6e e8 e2 a1 22 ff 81 00 47 cc 95 26
              *#          84 65 8d 60 49 e8 64 29 42 6d b8 7c 54 ad 14 3d
              **
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-3
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
              *= type=test
              *#       info (52 octets):  00 20 10 74 6c 73 31 33 20 72 65 73 20 6d 61 73
              *#          74 65 72 20 20 91 45 a9 6e e8 e2 a1 22 ff 81 00 47 cc 95 26 84
@@ -490,26 +488,70 @@ int main(int argc, char **argv)
 
             for (size_t i = 0; i < s2n_array_len(modes); i++) {
                 DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(modes[i]), s2n_connection_ptr_free);
-                conn->secure.cipher_suite = cipher_suite;
+                conn->secure->cipher_suite = cipher_suite;
                 EXPECT_OK(s2n_connection_set_test_master_secret(conn, &master_secret));
                 EXPECT_OK(s2n_connection_set_test_transcript_hash(conn, CLIENT_FINISHED, &hash));
 
                 EXPECT_OK(s2n_derive_resumption_master_secret(conn));
                 EXPECT_EQUAL(derived_secret.size, secret.size);
-                EXPECT_BYTEARRAY_EQUAL(conn->secrets.tls13.resumption_master_secret,
+                EXPECT_BYTEARRAY_EQUAL(conn->secrets.version.tls13.resumption_master_secret,
                         secret.data, secret.size);
             }
-        }
-    }
+        };
+
+        /* Derive EXPORTER_MASTER_SECRET */
+        {
+            /**
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
+             *= type=test
+             *#    {client}  derive secret "tls13 exp master" (same as server)
+             *
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
+             *= type=test
+             *#    {server}  derive secret "tls13 exp master":
+             *#
+             *#       PRK (32 octets):  18 df 06 84 3d 13 a0 8b f2 a4 49 84 4c 5f 8a 47
+             *#          80 01 bc 4d 4c 62 79 84 d5 a4 1d a8 d0 40 29 19
+             *#
+             *#       hash (32 octets):  96 08 10 2a 0f 1c cc 6d b6 25 0b 7b 7e 41 7b 1a
+             *#          00 0e aa da 3d aa e4 77 7a 76 86 c9 ff 83 df 13
+             *#
+             **
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-3
+             *= type=test
+             *#       info (52 octets):  00 20 10 74 6c 73 31 33 20 65 78 70 20 6d 61 73
+             *#          74 65 72 20 96 08 10 2a 0f 1c cc 6d b6 25 0b 7b 7e 41 7b 1a 00
+             *#          0e aa da 3d aa e4 77 7a 76 86 c9 ff 83 df 13
+             *#
+             *#       expanded (32 octets):  fe 22 f8 81 17 6e da 18 eb 8f 44 52 9e 67
+             *#          92 c5 0c 9a 3f 89 45 2f 68 d8 ae 31 1b 43 09 d3 cf 50
+             */
+            S2N_BLOB_FROM_HEX(hash, "96 08 10 2a 0f 1c cc 6d b6 25 0b 7b 7e 41 7b 1a \
+                       00 0e aa da 3d aa e4 77 7a 76 86 c9 ff 83 df 13");
+            S2N_BLOB_FROM_HEX(secret, "fe 22 f8 81 17 6e da 18 eb 8f 44 52 9e 67 \
+                       92 c5 0c 9a 3f 89 45 2f 68 d8 ae 31 1b 43 09 d3 cf 50");
+
+            for (size_t i = 0; i < s2n_array_len(modes); i++) {
+                DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(modes[i]), s2n_connection_ptr_free);
+                conn->secure->cipher_suite = cipher_suite;
+                EXPECT_OK(s2n_connection_set_test_master_secret(conn, &master_secret));
+                EXPECT_OK(s2n_connection_set_test_transcript_hash(conn, SERVER_FINISHED, &hash));
+
+                EXPECT_OK(s2n_derive_exporter_master_secret(conn, &derived_secret));
+                EXPECT_EQUAL(derived_secret.size, secret.size);
+                EXPECT_BYTEARRAY_EQUAL(derived_secret.data, secret.data, secret.size);
+            }
+        };
+    };
 
     /* Resumed 0-RTT Handshake */
     {
         /**
-         *= https://www.rfc-editor.org/rfc/rfc8448.html#section-4
+         *= https://www.rfc-editor.org/rfc/rfc8448#section-4
          *= type=test
          *#    {server}  extract secret "early" (same as client early secret)
          *
-         *= https://www.rfc-editor.org/rfc/rfc8448.html#section-4
+         *= https://www.rfc-editor.org/rfc/rfc8448#section-4
          *= type=test
          *#    {client}  extract secret "early":
          *#
@@ -530,7 +572,7 @@ int main(int argc, char **argv)
         {
             for (size_t i = 0; i < s2n_array_len(modes); i++) {
                 DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(modes[i]), s2n_connection_ptr_free);
-                conn->secure.cipher_suite = cipher_suite;
+                conn->secure->cipher_suite = cipher_suite;
 
                 DEFER_CLEANUP(struct s2n_psk *psk = s2n_test_psk_new(conn), s2n_psk_free);
                 EXPECT_NOT_NULL(psk);
@@ -544,16 +586,16 @@ int main(int argc, char **argv)
                 /* Early secret retrieved and saved for connection */
                 conn->psk_params.chosen_psk = psk;
                 EXPECT_OK(s2n_tls13_extract_secret(conn, S2N_EARLY_SECRET));
-                EXPECT_BYTEARRAY_EQUAL(conn->secrets.tls13.extract_secret,
+                EXPECT_BYTEARRAY_EQUAL(conn->secrets.version.tls13.extract_secret,
                         early_secret.data, early_secret.size);
-                EXPECT_EQUAL(conn->secrets.tls13.extract_secret_type, S2N_EARLY_SECRET);
+                EXPECT_EQUAL(conn->secrets.extract_secret_type, S2N_EARLY_SECRET);
             }
-        }
+        };
 
         /* Derive BINDER_KEY */
         {
             /**
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-4
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-4
              *= type=test
              *#       PRK (32 octets):  69 fe 13 1a 3b ba d5 d6 3c 64 ee bc c3 0e 39 5b
              *#          9d 81 07 72 6a 13 d0 74 e3 89 db c8 a4 e4 72 56
@@ -563,7 +605,7 @@ int main(int argc, char **argv)
 
             for (size_t i = 0; i < s2n_array_len(modes); i++) {
                 DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(modes[i]), s2n_connection_ptr_free);
-                conn->secure.cipher_suite = cipher_suite;
+                conn->secure->cipher_suite = cipher_suite;
 
                 DEFER_CLEANUP(struct s2n_psk *psk = s2n_test_psk_new(conn), s2n_psk_free);
                 EXPECT_NOT_NULL(psk);
@@ -575,16 +617,16 @@ int main(int argc, char **argv)
                 EXPECT_EQUAL(derived_secret.size, binder_key.size);
                 EXPECT_BYTEARRAY_EQUAL(derived_secret.data, binder_key.data, binder_key.size);
             }
-        }
+        };
 
         /* Derive CLIENT_EARLY_TRAFFIC_SECRET */
         {
             /**
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-4
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-4
              *= type=test
              *#    {server}  derive secret "tls13 c e traffic" (same as client)
              *
-             *= https://www.rfc-editor.org/rfc/rfc8448.html#section-4
+             *= https://www.rfc-editor.org/rfc/rfc8448#section-4
              *= type=test
              *#    {client}  derive secret "tls13 c e traffic":
              *#
@@ -608,7 +650,7 @@ int main(int argc, char **argv)
 
             for (size_t i = 0; i < s2n_array_len(modes); i++) {
                 DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(modes[i]), s2n_connection_ptr_free);
-                conn->secure.cipher_suite = cipher_suite;
+                conn->secure->cipher_suite = cipher_suite;
                 EXPECT_OK(s2n_connection_set_test_early_secret(conn, &early_secret));
                 EXPECT_OK(s2n_connection_set_test_transcript_hash(conn, CLIENT_HELLO, &hash));
 
@@ -617,8 +659,8 @@ int main(int argc, char **argv)
                 EXPECT_EQUAL(derived_secret.size, secret.size);
                 EXPECT_BYTEARRAY_EQUAL(derived_secret.data, secret.data, secret.size);
             }
-        }
-    }
+        };
+    };
 
     END_TEST();
 }

@@ -13,23 +13,18 @@
  * permissions and limitations under the License.
  */
 
-#include "s2n_test.h"
+#include <openssl/dh.h>
 
+#include "api/s2n.h"
 #include "crypto/s2n_dhe.h"
-#include "crypto/s2n_ecc_evp.h"
 #include "crypto/s2n_drbg.h"
-
-#include "utils/s2n_random.h"
+#include "crypto/s2n_ecc_evp.h"
+#include "s2n_test.h"
+#include "testlib/s2n_testlib.h"
 #include "utils/s2n_blob.h"
+#include "utils/s2n_random.h"
 #include "utils/s2n_safety.h"
 
-#include <openssl/engine.h>
-#include <openssl/dh.h>
-#include "api/s2n.h"
-
-#include "testlib/s2n_testlib.h"
-
-#if S2N_LIBCRYPTO_SUPPORTS_CUSTOM_RAND
 const char reference_entropy_hex[] = "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
                                      "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
                                      "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
@@ -50,10 +45,11 @@ const char expected_dhe_key_hex[] = "0100cb5fa155609f350a0f07e340ef7dc854e38d97c
                                     "ddbaa47646a497793e0a8e129e00e4fcd4b11b68897afb0987a48f51e3a3079e3d0573d340597c2c7b8ec839ea608a341c8d3ae8fb8a30c2d80e7083f64adf790"
                                     "18a19c";
 
-struct s2n_stuffer test_entropy;
+struct s2n_stuffer test_entropy = { 0 };
 int s2n_entropy_generator(void *data, uint32_t size)
 {
-    struct s2n_blob blob = { .data = data, .size = size };
+    struct s2n_blob blob = { 0 };
+    POSIX_GUARD(s2n_blob_init(&blob, data, size));
     POSIX_GUARD(s2n_stuffer_read(&test_entropy, &blob));
     return 0;
 }
@@ -65,13 +61,19 @@ int s2n_entropy_init_cleanup(void)
 
 int main(int argc, char **argv)
 {
-    struct s2n_stuffer dhparams_in = {0}, dhparams_out = {0};
-    struct s2n_dh_params dh_params = {0};
-    struct s2n_blob b = {0};
+    struct s2n_stuffer dhparams_in = { 0 }, dhparams_out = { 0 };
+    struct s2n_dh_params dh_params = { 0 };
+    struct s2n_blob b = { 0 };
     char *dhparams_pem = NULL;
     uint64_t bytes_used = 0;
 
     BEGIN_TEST();
+
+    if (!s2n_supports_custom_rand()) {
+        /* Skip when custom rand is not supported */
+        END_TEST();
+    }
+
     EXPECT_SUCCESS(s2n_disable_tls13_in_test());
 
     EXPECT_NOT_NULL(dhparams_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
@@ -100,9 +102,12 @@ int main(int argc, char **argv)
     EXPECT_SUCCESS(s2n_pkcs3_to_dh_params(&dh_params, &b));
 
     /* Set s2n_random to use a new fixed DRBG to test that other known answer tests with s2n_random and OpenSSL are deterministic */
-    EXPECT_SUCCESS(s2n_stuffer_alloc_ro_from_hex_string(&test_entropy, reference_entropy_hex));
+    EXPECT_OK(s2n_stuffer_alloc_from_hex(&test_entropy, reference_entropy_hex));
     struct s2n_drbg drbg;
+
+    POSIX_GUARD_RESULT(s2n_rand_cleanup());
     EXPECT_SUCCESS(s2n_rand_set_callbacks(s2n_entropy_init_cleanup, s2n_entropy_init_cleanup, s2n_entropy_generator, s2n_entropy_generator));
+    POSIX_GUARD_RESULT(s2n_rand_init());
 
     s2n_stack_blob(personalization_string, 32, 32);
     EXPECT_OK(s2n_drbg_instantiate(&drbg, &personalization_string, S2N_AES_256_CTR_NO_DF_PR));
@@ -111,8 +116,8 @@ int main(int argc, char **argv)
     EXPECT_OK(s2n_get_private_random_bytes_used(&bytes_used));
     EXPECT_EQUAL(bytes_used, 0);
 
-    DEFER_CLEANUP(struct s2n_stuffer out_stuffer = {0}, s2n_stuffer_free);
-    struct s2n_blob out_blob = {0};
+    DEFER_CLEANUP(struct s2n_stuffer out_stuffer = { 0 }, s2n_stuffer_free);
+    struct s2n_blob out_blob = { 0 };
     EXPECT_SUCCESS(s2n_stuffer_alloc(&out_stuffer, 4096));
     POSIX_GUARD(s2n_dh_generate_ephemeral_key(&dh_params));
     POSIX_GUARD(s2n_dh_params_to_p_g_Ys(&dh_params, &out_stuffer, &out_blob));
@@ -120,29 +125,19 @@ int main(int argc, char **argv)
     EXPECT_OK(s2n_get_private_random_bytes_used(&bytes_used));
     EXPECT_EQUAL(bytes_used, 352);
 
-    DEFER_CLEANUP(struct s2n_stuffer dhe_key_stuffer = {0}, s2n_stuffer_free);
-    EXPECT_SUCCESS(s2n_stuffer_alloc_ro_from_hex_string(&dhe_key_stuffer, expected_dhe_key_hex));
+    DEFER_CLEANUP(struct s2n_stuffer dhe_key_stuffer = { 0 }, s2n_stuffer_free);
+    EXPECT_OK(s2n_stuffer_alloc_from_hex(&dhe_key_stuffer, expected_dhe_key_hex));
     EXPECT_EQUAL(dhe_key_stuffer.blob.size, 519);
 
     EXPECT_EQUAL(out_blob.size, 519);
 
-    EXPECT_EQUAL(0, memcmp(out_blob.data, dhe_key_stuffer.blob.data,  out_blob.size));
+    EXPECT_EQUAL(0, memcmp(out_blob.data, dhe_key_stuffer.blob.data, out_blob.size));
 
     EXPECT_SUCCESS(s2n_dh_params_free(&dh_params));
     EXPECT_SUCCESS(s2n_stuffer_free(&dhparams_out));
     EXPECT_SUCCESS(s2n_stuffer_free(&dhparams_in));
+    EXPECT_SUCCESS(s2n_stuffer_free(&test_entropy));
     free(dhparams_pem);
 
     END_TEST();
 }
-
-#else
-
-int main(int argc, char **argv)
-{
-    BEGIN_TEST();
-
-    END_TEST();
-}
-
-#endif

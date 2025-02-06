@@ -1,26 +1,20 @@
 name: Build Dashboard
 
 on:
-  pull_request_target:
-    types:
-      - opened
-      - reopened
-      - closed
-  issues:
-    types:
-      - opened
-      - reopened
-      - closed
+  schedule:
+    - cron: '0 0 * * 1-5'
 jobs:
   build:
     # This should only run in one place.
     if: contains(github.repository, 'aws/s2n-tls')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Check out GitHub Pages branch
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           ref: 'gh-pages'
 
@@ -76,11 +70,11 @@ jobs:
               widgets:
               - type: 'number'
                 title: 'Ready to merge'
-                issue_query: 'repo:aws/s2n-tls is:open is:pr review:approved'
+                issue_query: 'repo:aws/s2n-tls is:open is:pr review:approved -label:do_not_merge'
                 color: 'green'
               - type: 'number'
                 title: 'No review (external) last 14 days'
-                issue_query: 'repo:aws/s2n-tls is:open is:pr review:none -label:status/stale -label:s2n-core created:>{{ date("-14 days") }}'
+                issue_query: 'repo:aws/s2n-tls is:open is:pr comments:0 review:none -label:status/stale -label:s2n-core created:>{{ date("-14 days") }}'
                 color: 'red'
               - type: 'number'
                 title: 'PRs with changes requested (external)'
@@ -90,6 +84,10 @@ jobs:
                 title: 'PRs with zero interactions (external)'
                 issue_query: 'repo:aws/s2n-tls is:open is:pr interactions:0 sort:created-asc -label:status/stale -label:s2n-core'
                 color: 'blue'
+              - type: 'number'
+                title: 'Stale PRs'
+                issue_query: 'repo:aws/s2n-tls is:open is:pr label:status/stale'
+                color: 'black'
               - type: 'table'
                 title: '15 Oldest Pull Requests without review'
                 fields:
@@ -102,9 +100,8 @@ jobs:
           token: ${{ github.token }}
 
       - name: Publish Documentation
-        run: |
-          git add .
-          git config user.name 'GitHub Actions'
-          git config user.email 'nobody@github.com'
-          git commit -m 'Dashboard update' --allow-empty
-          git push origin gh-pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: .
+          git-config-name: 'GitHub Actions'
+          git-config-email: 'nobody@github.com'

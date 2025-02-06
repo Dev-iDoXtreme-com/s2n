@@ -2,7 +2,7 @@
 
 If you are curious about the internals of s2n-tls, or interested in contributing to
 s2n-tls, this document is for you. If instead you are interested in using s2n-tls in an application
-that you are developing, please see the accompanying [Usage Guide](https://github.com/aws/s2n-tls/blob/main/docs/USAGE-GUIDE.md).
+that you are developing, please see the accompanying [Usage Guide](usage-guide).
 
 ## s2n-tls's development principles
 
@@ -156,6 +156,16 @@ As discussed below, s2n-tls rarely allocates resources, and so has nothing to cl
 
 `DEFER_CLEANUP(_thealloc, _thecleanup)` is a failsafe way of ensuring that resources are cleaned up, using the ` __attribute__((cleanup())` destructor mechanism available in modern C compilers.  When the variable declared in `_thealloc` goes out of scope, the cleanup function `_thecleanup` is automatically called.  This guarantees that resources will be cleaned up, no matter how the function exits.
 
+### Lifecycle of s2n memory
+s2n states publicly that every `s2n_init()` call should be paired with an `s2n_cleanup()` call, but we also attempt to do some auto-cleanup behind the scenes because we know not every s2n-user can actually follow those steps. Unfortunately, that auto-cleanup has also caused issues because it’s not very well documented and is not guaranteed to work. Here is our general philosophy behind the auto-clean behavior.
+
+For every thread that s2n functions are called in, a small amount of thread-local memory also gets initialized. This is to ensure that our random number generator will output different numbers in different threads. This memory needs to be cleaned up per thread and users can do this themselves if they call `s2n_cleanup()` per thread. But if they forget, we utilize a pthread key that calls a destructor function that cleans up our thread-local memory when the thread closes.
+
+An important thing to note is that a call to `s2n_cleanup()` usually does not fully clean up s2n. It only cleans up the thread-local memory. This is because we have an atexit handler that does fully clean up s2n at process-exit.
+The behavior is different if the atexit handler is disabled by calling `s2n_disable_atexit()`. Then s2n is actually fully cleaned up if `s2n_cleanup()` is called on the thread that called `s2n_init()`. `s2n_cleanup()` attempts to track the thread that had originally called `s2n_init()` and only performs the full cleanup when that "main" thread exits. If this behavior does not work for your use case (for example, if the "main" thread does not outlive child threads using s2n), you can instead call `s2n_cleanup_thread()` on each thread exit.
+
+> Note: `s2n_cleanup_thread()` is currently considered unstable, meaning the API is subject to change in a future release. To access this API, include `api/unstable/cleanup.h`.
+
 ### Control flow and the state machine
 
 Branches can be a source of cognitive load, as they ask the reader to follow a path of thinking, while also remembering that there is another path to be explored. When branches are nested, they can often lead to impossible to grasp combinatorial explosions. s2n-tls tries to systematically reduce the number of branches used in the code in several ways.
@@ -180,7 +190,7 @@ GUARD(s2n_baz());
 
 This pattern leads to a linear control flow, where the main body of a function describes everything that happens in a regular, "*happy*" case. Any deviation is usually a fatal error and we exit the function. This is safe because s2n-tls rarely allocates resources, and so has nothing to clean up on error.
 
-This pattern also leads to extremely few "else" clauses in the s2n-tls code base. Within s2n-tls, else clauses should be treated with suspicion and examined for potential eradication. Where an else clause is necessary, we try to ensure that the first if block is the most likely case. This aids readability, and also results in a more efficient compiled instruction pipeline (although good CPU branch prediction will rapidly correct any mis-ordering).
+This pattern also leads to extremely few "else" clauses in the s2n-tls code base. Within s2n-tls, else clauses should be treated with suspicion and examined for potential eradication. Where an else clause is necessary, we try to ensure that the first if block is the most likely case. This aids readability, and also results in a more efficient compiled instruction pipeline (although good CPU branch prediction will rapidly correct any misordering).
 
 For branches on small enumerated types, s2n-tls generally favors switch statements: though switch statements taking up more than about 25 lines of code are discouraged, and a "default:" block is mandatory.
 
@@ -190,7 +200,7 @@ Lastly, s2n-tls studiously avoids locks. s2n-tls is designed to be thread-safe, 
 
 ### Code formatting and commenting
 
-s2n-tls is written in C99. The code formatting and indentation should be relatively clear from reading some s2n-tls source files, but there is also an automated "make indent" target that will indent the s2n-tls sources.
+s2n-tls is written in C99. The code formatting and indentation should be relatively clear from reading some s2n-tls source files, but we also have a .clang-format file which we are adopting. The code format is checked by a CI job, and if clang-format finds any unformatted code the check will fail. For convenience, there is a utility script at `./codebuild/bin/clang_format_changed_files.sh` which will format all of the source files changed on a git branch.
 
 There should be no need for comments to explain *what* s2n-tls code is doing; variables and functions should be given clear and human-readable names that make their purpose and intent intuitive. Comments explaining *why* we are doing something are encouraged. Often some context setting is necessary; a reference to an RFC, or a reminder of some critical state that is hard to work directly into the immediate code in a natural way. All comments should be written using C syntax `/* */` and **avoid** C++ comments `//` even though C99 compilers allow `//`.
 
@@ -205,6 +215,7 @@ There is also a brief set of other coding conventions:
 * Duplication of logic is discouraged
 * 4 spaces, no tabs
 * Assuming a terminal that is 120 characters wide is ok
+* Control structures should always include curly braces (even if only one line)
 
 ## Tests
 
@@ -223,6 +234,24 @@ To avoid adding unneeded code to the production build of s2n-tls, there is also 
 Unit tests are run automatically with `make`. To run a subset of the unit tests, set the `UNIT_TESTS` environment variable with the unit test name(s). For example:
 ```
 UNIT_TESTS=s2n_hash_test make
+```
+
+### Debugging With GDB
+When trying to debug a failing test case, it is often useful to use a debugger like `gdb`. First make sure that the tests and s2n are compiled with debug information. This can be done by setting the `CMAKE_BUILD_TYPE` to `DEBUG`. Alternatively, you can set the build type to `RelWithDebInfo` to get a release build with debug info included.
+```
+# generate the build configuration with debug symbols enabled
+cmake . \
+    -Bbuild \
+    -DCMAKE_BUILD_TYPE=DEBUG
+```
+
+Our unit tests rely on relative paths for certificates, so the test executable must be invoked from the folder that holds the test source file, or you can `cd` into the unit test folder once gdb is running.
+
+To run the `s2n_x509_validator_test` with `gdb`
+```
+pwd
+# .../s2n-tls/tests/unit/
+gdb ../../build/bin/s2n_x509_validator_test
 ```
 
 ## A tour of s2n-tls memory handling: blobs and stuffers
@@ -269,16 +298,16 @@ To further encourage stream-oriented programming, the stuffer is also the place 
 
 ```c
 /* Read and write integers in network order */
-extern int s2n_stuffer_read_uint8(struct s2n_stuffer *stuffer, uint8_t *u);
-extern int s2n_stuffer_read_uint16(struct s2n_stuffer *stuffer, uint16_t *u);
-extern int s2n_stuffer_read_uint24(struct s2n_stuffer *stuffer, uint32_t *u);
-extern int s2n_stuffer_read_uint32(struct s2n_stuffer *stuffer, uint32_t *u);
-extern int s2n_stuffer_read_uint64(struct s2n_stuffer *stuffer, uint64_t *u);
-extern int s2n_stuffer_write_uint8(struct s2n_stuffer *stuffer, uint8_t u);
-extern int s2n_stuffer_write_uint16(struct s2n_stuffer *stuffer, uint16_t u);
-extern int s2n_stuffer_write_uint24(struct s2n_stuffer *stuffer, uint32_t u);
-extern int s2n_stuffer_write_uint32(struct s2n_stuffer *stuffer, uint32_t u);
-extern int s2n_stuffer_write_uint64(struct s2n_stuffer *stuffer, uint64_t u);
+int s2n_stuffer_read_uint8(struct s2n_stuffer *stuffer, uint8_t *u);
+int s2n_stuffer_read_uint16(struct s2n_stuffer *stuffer, uint16_t *u);
+int s2n_stuffer_read_uint24(struct s2n_stuffer *stuffer, uint32_t *u);
+int s2n_stuffer_read_uint32(struct s2n_stuffer *stuffer, uint32_t *u);
+int s2n_stuffer_read_uint64(struct s2n_stuffer *stuffer, uint64_t *u);
+int s2n_stuffer_write_uint8(struct s2n_stuffer *stuffer, uint8_t u);
+int s2n_stuffer_write_uint16(struct s2n_stuffer *stuffer, uint16_t u);
+int s2n_stuffer_write_uint24(struct s2n_stuffer *stuffer, uint32_t u);
+int s2n_stuffer_write_uint32(struct s2n_stuffer *stuffer, uint32_t u);
+int s2n_stuffer_write_uint64(struct s2n_stuffer *stuffer, uint64_t u);
 ```
 
 and there are other utility functions for handling base64 encoding to and from a stuffer, or text manipulation - like tokenization. The idea is to implement basic serializing just once, rather than spread out and duplicated across the message parsers, and to maximize the declarative nature of the I/O. For example, this code parses a TLS record header:
@@ -392,21 +421,25 @@ struct s2n_stuffer alert_in;
 
 'header_in' is a small 5-byte stuffer, which is used to read in a record header. Once that stuffer is full, and the size of the next record is determined (from that header), inward data is directed to the 'in' stuffer.  The 'out' stuffer is for data that we are writing out; like an encrypted TLS record. 'alert_in' is for any TLS alert message that s2n-tls receives from its peer. s2n-tls treats all alerts as fatal, but we buffer the full alert message so that reason can be logged.
 
-When past the handshake phase, s2n-tls supports full-duplex I/O. Separate threads or event handlers are free to call s2n_send and s2n_recv on the same connection. Because either a read or a write may cause a connection to be closed, there are two additional stuffers for storing outbound alert messages:
+When past the handshake phase, s2n-tls supports full-duplex I/O. Separate threads or event handlers are free to call s2n_send and s2n_recv on the same connection. Because either a read or a write may cause a connection to be closed, there are two additional fields for storing outbound alert messages:
 
 ```c
-struct s2n_stuffer reader_alert_out;
-struct s2n_stuffer writer_alert_out;
+uint8_t reader_alert_out;
+uint8_t writer_alert_out;
 ```
 
-this pattern means that both the reader thread and writer thread can create pending alert messages without needing any locks. If either the reader or writer generates an alert, it also sets the 'closing' state to 1.
+This pattern means that both the reader thread and writer thread can create pending alert messages without needing any locks. If either the reader or writer generates an alert, it also sets the 'closed' states to 1.
 
 ```c
-sig_atomic_t closing;
-sig_atomic_t closed;
+sig_atomic_t read_closed;
+sig_atomic_t write_closed;
 ```
 
-'closing' is an atomic, but even if it were not it can only be changed from 0 to 1, so an over-write is harmless. Every time a TLS record is fully-written, s2n_send() checks to see if closing is set to 1. If it is then the reader or writer alert message will be sent (writer takes priority, if both are present) and the connection will be closed. Once the closed is 1, no more I/O may be sent or received on the connection.
+These fields are atomic. However because they are only ever changed from 0 to 1, an over-write would be harmless.
+
+s2n-tls only sends fatal alerts during `s2n_shutdown()` or `s2n_shutdown_send()`.
+Only one alert is sent, so writer alerts take priority if both are present.
+If no alerts are present, then a generic close_notify will be sent instead.
 
 ## s2n-tls and entropy
 

@@ -14,7 +14,6 @@
  */
 
 #include "s2n_test.h"
-
 #include "tls/extensions/s2n_client_alpn.h"
 
 int main(int argc, char **argv)
@@ -27,7 +26,7 @@ int main(int argc, char **argv)
 
     /* Test should_send */
     {
-        struct s2n_connection *conn;
+        struct s2n_connection *conn = NULL;
         EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
 
         EXPECT_SUCCESS(s2n_connection_set_protocol_preferences(conn, NULL, 0));
@@ -37,21 +36,21 @@ int main(int argc, char **argv)
         EXPECT_TRUE(s2n_client_alpn_extension.should_send(conn));
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
-    }
+    };
 
     /* Test send */
     {
-        struct s2n_connection *conn;
+        struct s2n_connection *conn = NULL;
         EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
         EXPECT_SUCCESS(s2n_connection_set_protocol_preferences(conn, protocols, protocols_count));
 
-        struct s2n_stuffer stuffer;
+        struct s2n_stuffer stuffer = { 0 };
         EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&stuffer, 0));
 
         EXPECT_SUCCESS(s2n_client_alpn_extension.send(conn, &stuffer));
 
         /* Should have correct size */
-        uint16_t actual_size;
+        uint16_t actual_size = 0;
         EXPECT_SUCCESS(s2n_stuffer_read_uint16(&stuffer, &actual_size));
         EXPECT_EQUAL(actual_size, s2n_stuffer_data_available(&stuffer));
         EXPECT_EQUAL(actual_size, conn->application_protocols_overridden.size);
@@ -63,15 +62,15 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_stuffer_free(&stuffer));
         EXPECT_SUCCESS(s2n_connection_free(conn));
-    }
+    };
 
     /* Test receive can accept the output of send */
     {
-        struct s2n_connection *conn;
+        struct s2n_connection *conn = NULL;
         EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
         EXPECT_SUCCESS(s2n_connection_set_protocol_preferences(conn, protocols, protocols_count));
 
-        struct s2n_stuffer stuffer;
+        struct s2n_stuffer stuffer = { 0 };
         EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&stuffer, 0));
 
         EXPECT_SUCCESS(s2n_client_alpn_extension.send(conn, &stuffer));
@@ -83,14 +82,14 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
         EXPECT_SUCCESS(s2n_stuffer_free(&stuffer));
-    }
+    };
 
     /* Test receive does nothing if no protocol preferences configured */
     {
-        struct s2n_connection *conn;
+        struct s2n_connection *conn = NULL;
         EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
 
-        struct s2n_stuffer stuffer;
+        struct s2n_stuffer stuffer = { 0 };
         EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&stuffer, 0));
 
         EXPECT_SUCCESS(s2n_client_alpn_extension.send(conn, &stuffer));
@@ -101,14 +100,14 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
         EXPECT_SUCCESS(s2n_stuffer_free(&stuffer));
-    }
+    };
 
     /* Test receive does nothing if extension malformed */
     {
-        struct s2n_connection *conn;
+        struct s2n_connection *conn = NULL;
         EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
 
-        struct s2n_stuffer stuffer;
+        struct s2n_stuffer stuffer = { 0 };
         EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&stuffer, 0));
 
         EXPECT_SUCCESS(s2n_client_alpn_extension.send(conn, &stuffer));
@@ -120,7 +119,7 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
         EXPECT_SUCCESS(s2n_stuffer_free(&stuffer));
-    }
+    };
 
     END_TEST();
     return 0;

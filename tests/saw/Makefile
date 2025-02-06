@@ -106,20 +106,23 @@ failure-tests : bitcode
 failure_tests/sha_%.log : bitcode/sha_%.bc
         #this might not be necessary
 	cp $< bitcode/all_llvm.bc 
-	@set -o pipefail; \
-	! (saw verify_s2n_hmac_sha256.saw 2>&1 | tee $@)
+	set -o pipefail; \
+	! (saw verify_HMAC.saw 2>&1 | tee $@)
+	grep "error: in _SAW_verify_prestate" $@
 
 failure_tests/tls_%.log : bitcode/tls_%.bc
         #this might not be necessary
 	cp $< bitcode/all_llvm.bc 
-	@set -o pipefail; \
+	set -o pipefail; \
 	! (saw verify_state_machine.saw 2>&1 | tee $@)
+	grep "error: in _SAW_verify_prestate" $@
 
 failure_tests/cork_%.log : bitcode/cork_%.bc
         #this might not be necessary
 	cp $< bitcode/all_llvm.bc 
-	@set -o pipefail; \
+	set -o pipefail; \
 	! (saw verify_cork_uncork.saw 2>&1 | tee $@)
+	grep "error: in llvm_ghost_value" $@
 
 
 # we patch the s2n dir, build it with the top level s2n makefile, and
@@ -146,12 +149,6 @@ bitcode :
 CRYPTO_C = $(wildcard ../../crypto/*.c) $(wildcard ../../crypto/*.h) ../../crypto/Makefile
 CRYPTO_COPY = $(addprefix s2n/crypto/, $(notdir $(CRYPTO_C)))
 
-PQ_CRYPTO_C = $(wildcard ../../pq-crypto/*.c) $(wildcard ../../pq-crypto/*.h) ../../pq-crypto/s2n_pq_asm.mk ../../pq-crypto/Makefile
-PQ_CRYPTO_COPY = $(addprefix s2n/pq-crypto/, $(notdir $(PQ_CRYPTO_C)))
-
-KYBER_R3_C = $(wildcard ../../pq-crypto/kyber_r3/*.c) $(wildcard ../../pq-crypto/kyber_r3/*.h) ../../pq-crypto/kyber_r3/Makefile
-KYBER_R3_COPY = $(addprefix s2n/pq-crypto/kyber_r3/, $(notdir $(KYBER_R3_C)))
-
 UTILS_C = $(wildcard ../../utils/*.c) $(wildcard ../../utils/*.h) ../../utils/Makefile
 UTILS_COPY =$(addprefix s2n/utils/, $(notdir $(UTILS_C)))
 
@@ -162,7 +159,8 @@ TLS_DIRS = $(sort $(dir $(TLS_COPY)))
 STUFFER_C = $(wildcard ../../stuffer/*.c) $(wildcard ../../stuffer/*.h) ../../stuffer/Makefile
 STUFFER_COPY =$(addprefix s2n/stuffer/, $(notdir $(STUFFER_C)))
 
-API_COPY =$(addprefix s2n/api/, $(notdir $(wildcard ../../api/*.h)))
+API_COPY = $(subst ../../api, s2n/api, $(wildcard ../../api/*.h ../../api/*/*.h))
+API_DIRS = $(sort $(dir $(API_COPY)))
 
 ERROR_C = $(wildcard ../../error/*.c) $(wildcard ../../error/*.h) ../../error/Makefile
 ERROR_COPY = $(addprefix s2n/error/, $(notdir $(ERROR_C)))
@@ -173,15 +171,9 @@ s2n/error :
 	mkdir -p $@
 
 s2n/api :
-	mkdir -p $@
+	mkdir -p $(API_DIRS)
 
 s2n/crypto :
-	mkdir -p $@
-
-s2n/pq-crypto :
-	mkdir -p $@
-
-s2n/pq-crypto/kyber_r3 :
 	mkdir -p $@
 
 s2n/utils :
@@ -201,12 +193,12 @@ export BITCODE_DIR := $(CURDIR)/bitcode/
 tmp:
 	mkdir -p tmp
 
-bitcode/all_llvm.bc : s2n/crypto s2n/pq-crypto s2n/utils s2n/tls s2n/api s2n/error s2n/stuffer s2n/Makefile s2n/s2n.mk $(CRYPTO_COPY) $(PQ_CRYPTO_COPY) $(UTILS_COPY) $(TLS_COPY) $(API_COPY) $(ERROR_COPY) $(STUFFER_COPY)
+bitcode/all_llvm.bc : s2n/crypto s2n/utils s2n/tls s2n/api s2n/error s2n/stuffer s2n/Makefile s2n/s2n.mk $(CRYPTO_COPY) $(PQ_CRYPTO_COPY) $(UTILS_COPY) $(TLS_COPY) $(API_COPY) $(ERROR_COPY) $(STUFFER_COPY)
 	${MAKE} -C s2n bc
 	${MAKE} -C bitcode all_llvm.bc
 
 
-s2n/lib/libs2n.so : s2n/crypto s2n/pq-crypto s2n/pq-crypto/kyber_r3 s2n/utils s2n/tls s2n/api s2n/error s2n/stuffer s2n/lib s2n/Makefile s2n/s2n.mk $(CRYPTO_COPY) $(PQ_CRYPTO_COPY) $(KYBER_R3_COPY) $(UTILS_COPY) $(TLS_COPY) $(API_COPY) $(ERROR_COPY) $(STUFFER_COPY) $(LIB_COPY)
+s2n/lib/libs2n.so : s2n/crypto s2n/utils s2n/tls s2n/api s2n/error s2n/stuffer s2n/lib s2n/Makefile s2n/s2n.mk $(CRYPTO_COPY) $(UTILS_COPY) $(TLS_COPY) $(API_COPY) $(ERROR_COPY) $(STUFFER_COPY) $(LIB_COPY)
 	${MAKE} -C s2n libs NO_STACK_PROTECTOR=1 NO_INLINE=1
 
 s2n/%.h : ../../%.h
@@ -225,7 +217,4 @@ s2n/Makefile : ../../Makefile
 	cp $< $@
 
 s2n/s2n.mk : ../../s2n.mk
-	cp $< $@
-
-s2n/pq-crypto/s2n_pq_asm.mk : ../../pq-crypto/s2n_pq_asm.mk
 	cp $< $@

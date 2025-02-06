@@ -17,11 +17,10 @@
 
 #include <openssl/evp.h>
 
-#include "crypto/s2n_signature.h"
 #include "crypto/s2n_ecdsa.h"
 #include "crypto/s2n_hash.h"
 #include "crypto/s2n_rsa.h"
-
+#include "crypto/s2n_signature.h"
 #include "utils/s2n_blob.h"
 #include "utils/s2n_result.h"
 
@@ -51,13 +50,13 @@ struct s2n_pkey {
             struct s2n_hash_state *digest, struct s2n_blob *signature);
     int (*encrypt)(const struct s2n_pkey *key, struct s2n_blob *in, struct s2n_blob *out);
     int (*decrypt)(const struct s2n_pkey *key, struct s2n_blob *in, struct s2n_blob *out);
-    int (*match)(const struct s2n_pkey *pub_key, const struct s2n_pkey *priv_key); 
+    int (*match)(const struct s2n_pkey *pub_key, const struct s2n_pkey *priv_key);
     int (*free)(struct s2n_pkey *key);
     int (*check_key)(const struct s2n_pkey *key);
 };
 
 int s2n_pkey_zero_init(struct s2n_pkey *pkey);
-int s2n_pkey_setup_for_type(struct s2n_pkey *pkey, s2n_pkey_type pkey_type);
+S2N_RESULT s2n_pkey_setup_for_type(struct s2n_pkey *pkey, s2n_pkey_type pkey_type);
 int s2n_pkey_check_key_exists(const struct s2n_pkey *pkey);
 
 S2N_RESULT s2n_pkey_size(const struct s2n_pkey *pkey, uint32_t *size_out);
@@ -70,5 +69,8 @@ int s2n_pkey_decrypt(const struct s2n_pkey *pkey, struct s2n_blob *in, struct s2
 int s2n_pkey_match(const struct s2n_pkey *pub_key, const struct s2n_pkey *priv_key);
 int s2n_pkey_free(struct s2n_pkey *pkey);
 
-int s2n_asn1der_to_private_key(struct s2n_pkey *priv_key, struct s2n_blob *asn1der);
-int s2n_asn1der_to_public_key_and_type(struct s2n_pkey *pub_key, s2n_pkey_type *pkey_type, struct s2n_blob *asn1der);
+S2N_RESULT s2n_asn1der_to_private_key(struct s2n_pkey *priv_key, struct s2n_blob *asn1der, int type_hint);
+S2N_RESULT s2n_asn1der_to_public_key_and_type(struct s2n_pkey *pub_key, s2n_pkey_type *pkey_type, struct s2n_blob *asn1der);
+S2N_RESULT s2n_pkey_get_type(EVP_PKEY *evp_pkey, s2n_pkey_type *pkey_type);
+S2N_RESULT s2n_pkey_from_x509(X509 *cert, struct s2n_pkey *pub_key_out,
+        s2n_pkey_type *pkey_type_out);

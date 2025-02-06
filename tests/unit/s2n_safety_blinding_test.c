@@ -14,23 +14,22 @@
  */
 
 #include "s2n_test.h"
-
 #include "tls/s2n_connection.h"
 #include "utils/s2n_safety.h"
 
 #define TEST_ERRNO S2N_ERR_T_INTERNAL_END
 
-#define SETUP_TEST(conn) \
+#define SETUP_TEST(conn)                       \
     EXPECT_SUCCESS(s2n_connection_wipe(conn)); \
-    EXPECT_SUCCESS(s2n_connection_set_blinding(conn, S2N_SELF_SERVICE_BLINDING)); \
+    EXPECT_SUCCESS(s2n_connection_set_blinding(conn, S2N_SELF_SERVICE_BLINDING));
 
-#define EXPECT_BLINDING(conn) \
+#define EXPECT_BLINDING(conn)                            \
     EXPECT_NOT_EQUAL(s2n_connection_get_delay(conn), 0); \
-    EXPECT_TRUE(conn->closed); \
+    EXPECT_TRUE(s2n_connection_check_io_status(conn, S2N_IO_CLOSED));
 
-#define EXPECT_NO_BLINDING(conn) \
+#define EXPECT_NO_BLINDING(conn)                     \
     EXPECT_EQUAL(s2n_connection_get_delay(conn), 0); \
-    EXPECT_FALSE(conn->closed); \
+    EXPECT_TRUE(s2n_connection_check_io_status(conn, S2N_IO_FULL_DUPLEX));
 
 S2N_RESULT s2n_result_func(bool success)
 {
@@ -45,7 +44,7 @@ int s2n_posix_func(bool success)
 }
 
 int ptr_value = 0;
-int* s2n_ptr_func(bool success)
+int *s2n_ptr_func(bool success)
 {
     PTR_ENSURE(success, TEST_ERRNO);
     return &ptr_value;
@@ -87,7 +86,7 @@ int s2n_posix_test(struct s2n_connection *conn)
     return S2N_SUCCESS;
 }
 
-int* s2n_ptr_test(struct s2n_connection *conn)
+int *s2n_ptr_test(struct s2n_connection *conn)
 {
     WITH_ERROR_BLINDING(conn, PTR_GUARD_RESULT(s2n_result_func(true)));
     EXPECT_NO_BLINDING(conn);
@@ -125,7 +124,7 @@ int main(int argc, char **argv)
             s2n_errno = S2N_ERR_OK;
             EXPECT_OK(s2n_connection_apply_error_blinding(&conn));
             EXPECT_NO_BLINDING(conn);
-        }
+        };
 
         /* No-op for retriable errors */
         {
@@ -133,7 +132,7 @@ int main(int argc, char **argv)
             s2n_errno = S2N_ERR_IO_BLOCKED;
             EXPECT_OK(s2n_connection_apply_error_blinding(&conn));
             EXPECT_NO_BLINDING(conn);
-        }
+        };
 
         /* Closes connection but does not blind for non-blinding errors */
         {
@@ -141,8 +140,8 @@ int main(int argc, char **argv)
             s2n_errno = S2N_ERR_CIPHER_NOT_SUPPORTED;
             EXPECT_OK(s2n_connection_apply_error_blinding(&conn));
             EXPECT_EQUAL(s2n_connection_get_delay(conn), 0);
-            EXPECT_TRUE(conn->closed);
-        }
+            EXPECT_TRUE(s2n_connection_check_io_status(conn, S2N_IO_CLOSED));
+        };
 
         /* Blinds for an average error */
         {
@@ -150,10 +149,30 @@ int main(int argc, char **argv)
             s2n_errno = S2N_ERR_UNIMPLEMENTED;
             EXPECT_OK(s2n_connection_apply_error_blinding(&conn));
             EXPECT_BLINDING(conn);
+        };
+
+        /* Skips blinding if set to 0 */
+        {
+            SETUP_TEST(conn);
+            s2n_errno = S2N_ERR_UNIMPLEMENTED;
+
+            DEFER_CLEANUP(struct s2n_config *config = s2n_config_new(), s2n_config_ptr_free);
+            EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
+
+            /* No blinding delay, but closed connection */
+            EXPECT_SUCCESS(s2n_config_set_max_blinding_delay(config, 0));
+            EXPECT_OK(s2n_connection_apply_error_blinding(&conn));
+            EXPECT_EQUAL(s2n_connection_get_delay(conn), 0);
+            EXPECT_TRUE(s2n_connection_check_io_status(conn, S2N_IO_CLOSED));
+
+            /* Any non-zero blinding delay still causes blinding */
+            EXPECT_SUCCESS(s2n_config_set_max_blinding_delay(config, 1));
+            EXPECT_OK(s2n_connection_apply_error_blinding(&conn));
+            EXPECT_BLINDING(conn);
         }
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
-    }
+    };
 
     /* Test: WITH_ERROR_BLINDING macro
      * The WITH_ERROR_BLINDING macro relies on the current method exiting early.
@@ -178,7 +197,7 @@ int main(int argc, char **argv)
         EXPECT_BLINDING(conn);
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
-    }
+    };
 
     END_TEST();
 }
