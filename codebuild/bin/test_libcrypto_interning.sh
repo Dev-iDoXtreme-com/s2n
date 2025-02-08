@@ -15,15 +15,15 @@
 
 set -e
 
-
+source codebuild/bin/s2n_setup_env.sh
 source codebuild/bin/jobs.sh
 
 # build 2 different version of libcrypto to make it easy to break the application if
 # interning doesn't work as expected
 WHICH_LIBCRYPTO=$(echo "${S2N_LIBCRYPTO:-"openssl-1.1.1"}")
 TARGET_LIBCRYPTO="${WHICH_LIBCRYPTO//[-.]/_}"
-TARGET_LIBCRYPTO_PATH="$(pwd)/build/${TARGET_LIBCRYPTO}"
-OPENSSL_1_0="$(pwd)/build/openssl_1_0"
+TARGET_LIBCRYPTO_PATH="${TEST_DEPS_DIR}/${WHICH_LIBCRYPTO}"
+OPENSSL_1_0="$OPENSSL_1_0_2_INSTALL_DIR"
 if [ ! -f $OPENSSL_1_0/lib/libcrypto.a ]; then
   ./codebuild/bin/install_openssl_1_0_2.sh $OPENSSL_1_0/src $OPENSSL_1_0 linux
 fi
@@ -35,40 +35,21 @@ if [ ! -f $TARGET_LIBCRYPTO_PATH/lib/libcrypto.a ]; then
   fi
 fi
 
+COMMON_FLAGS="-DCMAKE_PREFIX_PATH=$TARGET_LIBCRYPTO_PATH -DCMAKE_BUILD_TYPE=RelWithDebInfo"
+LTO_FLAGS="-DS2N_LTO=on"
+
+# use LTO-aware commands if possible
+if [ -x "$(command -v gcc-ar)" ]; then
+  LTO_FLAGS+=" -DCMAKE_AR=$(which gcc-ar) -DCMAKE_NM=$(which gcc-nm) -DCMAKE_RANLIB=$(which gcc-ranlib)"
+fi
+
 function fail() {
     echo "test failure: $1"
     exit 1
 }
 
-# build a default version to test what happens without interning
-cmake . -Bbuild/shared-default -DCMAKE_PREFIX_PATH="$TARGET_LIBCRYPTO_PATH" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_SHARED_LIBS=on -DBUILD_TESTING=on
-cmake --build ./build/shared-default -- -j $JOBS
-ldd ./build/shared-default/lib/libs2n.so | grep -q libcrypto || fail "shared-default: libcrypto was not linked"
-
-# ensure libcrypto interning works with shared libs and no testing
-cmake . -Bbuild/shared -DCMAKE_PREFIX_PATH="$TARGET_LIBCRYPTO_PATH" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_SHARED_LIBS=on -DBUILD_TESTING=off -DS2N_INTERN_LIBCRYPTO=on
-cmake --build ./build/shared -- -j $JOBS
-# s2n should not publicly depend on libcrypto
-ldd ./build/shared/lib/libs2n.so | grep -q libcrypto && fail "shared: libcrypto was not interned"
-
-# ensure libcrypto interning works with shared libs and testing
-cmake . -Bbuild/shared-testing -DCMAKE_PREFIX_PATH="$TARGET_LIBCRYPTO_PATH" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_SHARED_LIBS=on -DBUILD_TESTING=on -DS2N_INTERN_LIBCRYPTO=on
-cmake --build ./build/shared-testing -- -j $JOBS
-# s2n should not publicly depend on libcrypto
-ldd ./build/shared-testing/lib/libs2n.so | grep -q libcrypto && fail "shared-testing: libcrypto was not interned"
-# run the tests and make sure they all pass with the prefixed version
-make -C build/shared-testing test ARGS="-j $JOBS"
-# load the wrong version of libcrypto and the tests should still pass
-LD_PRELOAD=$OPENSSL_1_0/lib/libcrypto.so make -C build/shared-testing test ARGS="-j $JOBS"
-
-# ensure libcrypto interning works with static libs
-# NOTE: static builds don't vary based on testing being enabled
-cmake . -Bbuild/static -DCMAKE_PREFIX_PATH="$TARGET_LIBCRYPTO_PATH" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_SHARED_LIBS=off -DBUILD_TESTING=on -DS2N_INTERN_LIBCRYPTO=on
-cmake --build ./build/static -- -j $JOBS
-make -C build/static test ARGS="-j $JOBS"
-
-# create a small app that links against both s2n and libcrypto
-cat <<EOF > build/static/app.c
+function write_app() {
+cat <<EOF > $1
 #include <s2n.h>
 #include <openssl/bn.h>
 
@@ -78,23 +59,101 @@ int main() {
     return 0;
 }
 EOF
+}
+
+function build() {
+  echo "=== BUILDING $1 ==="
+  cmake . -B$1 $COMMON_FLAGS ${@:2}
+  cmake --build $1 -- -j $JOBS
+}
+
+function tests() {
+  echo "=== TESTING $1 ==="
+  make -C $1 test ARGS="-j $JOBS -L unit"
+}
+
+##################
+# Dynamic builds #
+##################
+
+# build a default version to test what happens without interning
+build build/shared-default -DBUILD_SHARED_LIBS=on -DBUILD_TESTING=on
+ldd ./build/shared-default/lib/libs2n.so | grep -q libcrypto || fail "shared-default: libcrypto was not linked"
+
+# ensure libcrypto interning works with shared libs and no testing
+build build/shared -DBUILD_SHARED_LIBS=on -DBUILD_TESTING=off -DS2N_INTERN_LIBCRYPTO=on
+# s2n should not publicly depend on libcrypto
+ldd ./build/shared/lib/libs2n.so | grep -q libcrypto && fail "shared: libcrypto was not interned"
+
+# ensure libcrypto interning works with shared libs, LTO and no testing
+# NOTE: interning+LTO+testing doesn't currently work
+build build/shared-lto -DBUILD_SHARED_LIBS=on -DBUILD_TESTING=off -DS2N_INTERN_LIBCRYPTO=on $LTO_FLAGS
+# s2n should not publicly depend on libcrypto
+ldd ./build/shared-lto/lib/libs2n.so | grep -q libcrypto && fail "shared-lto: libcrypto was not interned"
+
+# ensure libcrypto interning works with shared libs and testing
+build build/shared-testing -DBUILD_SHARED_LIBS=on -DBUILD_TESTING=on -DS2N_INTERN_LIBCRYPTO=on
+# s2n should not publicly depend on libcrypto
+ldd ./build/shared-testing/lib/libs2n.so | grep -q libcrypto && fail "shared-testing: libcrypto was not interned"
+# run the tests and make sure they all pass with the prefixed version
+tests build/shared-testing
+# load the wrong version of libcrypto and the tests should still pass
+LD_PRELOAD=$OPENSSL_1_0/lib/libcrypto.so tests build/shared-testing
 
 # ensure the small app will compile with both versions of openssl without any linking issues
-for target in $OPENSSL_1_0 $TARGET_LIBCRYPTO_PATH
-do
-  echo "testing static linking with $target"
-  mkdir -p $target/bin
-  cc -fPIE -Iapi -I$target/include build/static/app.c build/static/lib/libs2n.a $target/lib/libcrypto.a -lpthread -ldl -o $target/bin/test-app
-  nm $target/bin/test-app | grep -q 'T s2n$BN_CTX_new' || fail "$target: libcrypto symbols were not prefixed"
-  nm $target/bin/test-app | grep -q 'T BN_CTX_new' || fail "$target: libcrypto was not linked in application"
-  # make sure the app doesn't crash
-  $target/bin/test-app
+for build in shared shared-lto; do
+  # create a small app that links against both s2n and libcrypto
+  write_app build/$build/app.c
+
+  for target in $OPENSSL_1_0 $TARGET_LIBCRYPTO_PATH; do
+    echo "testing $build linking with $target"
+    mkdir -p $target/bin
+    cc -fPIE -Iapi -I$target/include build/$build/app.c build/$build/lib/libs2n.so $target/lib/libcrypto.a -lpthread -ldl -o $target/bin/test-app
+    # make sure the app doesn't crash
+    LD_LIBRARY_PATH="build/$build/lib:$target/lib:$LD_LIBRARY_PATH" $target/bin/test-app
+  done
 done
+
+##################
+# Static builds  #
+##################
+
+# ensure libcrypto interning works with static libs
+# NOTE: static builds don't vary based on testing being enabled
+build build/static -DBUILD_SHARED_LIBS=off -DBUILD_TESTING=on -DS2N_INTERN_LIBCRYPTO=on
+tests build/static
+
+# TODO figure out how to get static-lto+interning builds working
+
+# ensure the small app will compile with both versions of openssl without any linking issues
+for build in static; do
+  # create a small app that links against both s2n and libcrypto
+  write_app build/$build/app.c
+
+  for target in $OPENSSL_1_0 $TARGET_LIBCRYPTO_PATH; do
+    echo "testing $build linking with $target"
+    mkdir -p $target/bin
+    cc -fPIE -Iapi -I$target/include build/$build/app.c build/$build/lib/libs2n.a $target/lib/libcrypto.a -lpthread -ldl -o $target/bin/test-app
+    nm $target/bin/test-app | grep -q 'T s2n$BN_CTX_new' || fail "$target: libcrypto symbols were not prefixed"
+    nm $target/bin/test-app | grep -q 'T BN_CTX_new' || fail "$target: libcrypto was not linked in application"
+    # make sure the app doesn't crash
+    $target/bin/test-app
+  done
+done
+
+##################
+# Runtime tests  #
+##################
 
 run_connection_test() {
     local TARGET="$1"
+    
     LD_PRELOAD=$OPENSSL_1_0/lib/libcrypto.so ./build/$TARGET/bin/s2nd -c default_tls13 localhost 4433 &> /dev/null &
     local SERVER_PID=$!
+    
+    # Wait for the server to start up before connecting
+    sleep 5s
+    
     LD_PRELOAD=$OPENSSL_1_0/lib/libcrypto.so ./build/$TARGET/bin/s2nc -i -c default_tls13 localhost 4433 | tee build/client.log
     kill $SERVER_PID &> /dev/null || true
 
@@ -104,11 +163,14 @@ run_connection_test() {
 }
 
 # without interning, the connection should fail when linking the wrong version of libcrypto
-echo "running pair: TLS 1.3 failure expected"
+echo "Running test: attempt TLS1.3 handshake without interning"
 run_connection_test shared-default && fail "TLS 1.3 handshake was expected to fail"
+echo "TLS1.3 handshake failed as expected"
+echo ""
 
 # with interning, the connection should succeed even though we've linked the wrong version of libcrypto
-echo "running pair: TLS 1.3 success expected"
+echo "Running test: attempt TLS1.3 handshake with interning"
 run_connection_test shared-testing || fail "TLS 1.3 handshake was expected to succeed"
+echo "TLS1.3 handshake succeeded as expected"
 
 echo "SUCCESS!"

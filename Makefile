@@ -47,7 +47,6 @@ include s2n.mk
 
 .PHONY : libs
 libs:
-	$(MAKE) -C pq-crypto
 	$(MAKE) -C utils
 	$(MAKE) -C error
 	$(MAKE) -C stuffer
@@ -59,37 +58,9 @@ libs:
 bin: libs
 	$(MAKE) -C bin
 
-.PHONY : integration
-integration: bin
-	$(MAKE) -C tests integration
-
 .PHONY : integrationv2
 integrationv2: bin
 	$(MAKE) -C tests integrationv2
-
-.PHONY : valgrind
-valgrind: bin
-	$(MAKE) -C tests valgrind
-
-.PHONY : fuzz
-ifeq ($(shell uname),Linux)
-fuzz : fuzz-linux
-else
-fuzz : fuzz-osx
-endif
-
-.PHONY : fuzz-osx
-fuzz-osx :
-	@echo "\033[33;1mSKIPPED\033[0m Fuzzing is not supported on \"$$(uname -mprs)\" at this time."
-
-.PHONY : fuzz-linux
-fuzz-linux : export S2N_UNSAFE_FUZZING_MODE = 1
-fuzz-linux : bin
-	$(MAKE) -C tests fuzz
-
-.PHONY : benchmark
-benchmark: bin
-	$(MAKE) -C tests benchmark
 
 .PHONY : coverage
 coverage: run-lcov run-genhtml
@@ -99,12 +70,11 @@ run-lcov:
 	$(MAKE) -C bin lcov
 	$(MAKE) -C crypto lcov
 	$(MAKE) -C error lcov
-	$(MAKE) -C pq-crypto run-lcov
 	$(MAKE) -C stuffer lcov
 	$(MAKE) -C tests lcov
 	$(MAKE) -C tls run-lcov
 	$(MAKE) -C utils lcov
-	lcov -a crypto/coverage.info -a error/coverage.info -a pq-crypto/coverage.info -a pq-crypto/kyber_r3/coverage.info -a stuffer/coverage.info -a tls/coverage.info -a $(wildcard tls/*/coverage.info) -a utils/coverage.info --output ${COVERAGE_DIR}/all_coverage.info
+	lcov -a crypto/coverage.info -a error/coverage.info -a stuffer/coverage.info -a tls/coverage.info -a $(wildcard tls/*/coverage.info) -a utils/coverage.info --output ${COVERAGE_DIR}/all_coverage.info
 
 .PHONY : run-genhtml
 run-genhtml:
@@ -113,7 +83,6 @@ run-genhtml:
 
 .PHONY : indent
 indent:
-	$(MAKE) -C pq-crypto indentsource
 	$(MAKE) -C tests indentsource
 	$(MAKE) -C stuffer indentsource
 	$(MAKE) -C crypto indentsource
@@ -145,7 +114,6 @@ uninstall:
 
 .PHONY : clean
 clean:
-	$(MAKE) -C pq-crypto clean
 	$(MAKE) -C tests clean
 	$(MAKE) -C stuffer decruft
 	$(MAKE) -C crypto decruft

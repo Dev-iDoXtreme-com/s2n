@@ -17,14 +17,13 @@ docs/doxygen/output/
 libcrypto-build/*
 libcrypto-root
 libcrypto-root/*
-tests/integration/__pycache__
 tests/unit/*_test
 tests/fuzz/*_test
 tests/fuzz/*.txt
 tests/fuzz/fuzz-*.log
-tests/benchmark/*_benchmark
 bin/s2nc
 bin/s2nd
+bin/policy
 util-linux-*
 Python-*
 clang-*
@@ -36,3 +35,10 @@ CMakeCache.txt
 CMakeFiles/*
 .project
 ./codebuild/spec/buildspec_*_batch.yml
+build/
+result
+result-*
+*.class
+# Exclude rust build directories
+*target/
+Cargo.lock

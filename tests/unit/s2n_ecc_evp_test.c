@@ -13,11 +13,12 @@
  * permissions and limitations under the License.
  */
 
-#include "s2n_test.h"
+#include "crypto/s2n_ecc_evp.h"
 
 #include "api/s2n.h"
-
-#include "crypto/s2n_ecc_evp.h"
+#include "crypto/s2n_fips.h"
+#include "crypto/s2n_libcrypto.h"
+#include "s2n_test.h"
 #include "stuffer/s2n_stuffer.h"
 #include "testlib/s2n_testlib.h"
 #include "tls/s2n_connection.h"
@@ -28,38 +29,48 @@
 
 extern const struct s2n_ecc_named_curve s2n_unsupported_curve;
 
-int main(int argc, char **argv) {
+DEFINE_POINTER_CLEANUP_FUNC(EC_KEY*, EC_KEY_free);
+DEFINE_POINTER_CLEANUP_FUNC(EC_POINT*, EC_POINT_free);
+
+int main(int argc, char** argv)
+{
     BEGIN_TEST();
     EXPECT_SUCCESS(s2n_disable_tls13_in_test());
+
+    /* Test the EC_KEY_CHECK_FIPS feature probe. AWS-LC is a libcrypto known to support this feature. */
+    if (s2n_libcrypto_is_awslc()) {
+        EXPECT_TRUE(s2n_ecc_evp_supports_fips_check());
+    }
+
     {
         /* Test generate ephemeral keys for all supported curves */
-        for (int i = 0; i < s2n_all_supported_curves_list_len; i++) {
-            struct s2n_ecc_evp_params evp_params = {0};
+        for (size_t i = 0; i < s2n_all_supported_curves_list_len; i++) {
+            struct s2n_ecc_evp_params evp_params = { 0 };
             /* Server generates a key */
             evp_params.negotiated_curve = s2n_all_supported_curves_list[i];
             EXPECT_SUCCESS(s2n_ecc_evp_generate_ephemeral_key(&evp_params));
             EXPECT_NOT_NULL(evp_params.evp_pkey);
             EXPECT_SUCCESS(s2n_ecc_evp_params_free(&evp_params));
         }
-    }
+    };
     {
         /* Test failure case for generate ephemeral key  when the negotiated curve is not set */
-        for (int i = 0; i < s2n_all_supported_curves_list_len; i++) {
-            struct s2n_ecc_evp_params evp_params = {0};
+        for (size_t i = 0; i < s2n_all_supported_curves_list_len; i++) {
+            struct s2n_ecc_evp_params evp_params = { 0 };
             /* Server generates a key */
             evp_params.negotiated_curve = NULL;
             EXPECT_FAILURE(s2n_ecc_evp_generate_ephemeral_key(&evp_params));
             EXPECT_NULL(evp_params.evp_pkey);
             EXPECT_SUCCESS(s2n_ecc_evp_params_free(&evp_params));
         }
-    }
+    };
     {
         /* Test generate ephemeral key and compute shared key for all supported curves */
-        for (int i = 0; i < s2n_all_supported_curves_list_len; i++) {
-            struct s2n_ecc_evp_params server_params = {0};
-            struct s2n_ecc_evp_params client_params = {0};
-            struct s2n_blob server_shared = {0};
-            struct s2n_blob client_shared = {0};
+        for (size_t i = 0; i < s2n_all_supported_curves_list_len; i++) {
+            struct s2n_ecc_evp_params server_params = { 0 };
+            struct s2n_ecc_evp_params client_params = { 0 };
+            struct s2n_blob server_shared = { 0 };
+            struct s2n_blob client_shared = { 0 };
 
             /* Server generates a key */
             server_params.negotiated_curve = s2n_all_supported_curves_list[i];
@@ -73,11 +84,11 @@ int main(int argc, char **argv) {
 
             /* Compute shared secret for server */
             EXPECT_SUCCESS(
-                s2n_ecc_evp_compute_shared_secret_from_params(&server_params, &client_params, &server_shared));
+                    s2n_ecc_evp_compute_shared_secret_from_params(&server_params, &client_params, &server_shared));
 
             /* Compute shared secret for client */
             EXPECT_SUCCESS(
-                s2n_ecc_evp_compute_shared_secret_from_params(&client_params, &server_params, &client_shared));
+                    s2n_ecc_evp_compute_shared_secret_from_params(&client_params, &server_params, &client_shared));
 
             /* Check if the shared secret computed is the same for the client
              * and the server */
@@ -90,16 +101,16 @@ int main(int argc, char **argv) {
             EXPECT_SUCCESS(s2n_ecc_evp_params_free(&server_params));
             EXPECT_SUCCESS(s2n_ecc_evp_params_free(&client_params));
         }
-    }
+    };
     {
         /* Test failure case for computing shared key for all supported curves when the server
         and client curves do not match */
-        for (int i = 0; i < s2n_all_supported_curves_list_len; i++) {
-            for (int j = 0; j < s2n_all_supported_curves_list_len; j++) {
-                struct s2n_ecc_evp_params server_params = {0};
-                struct s2n_ecc_evp_params client_params = {0};
-                struct s2n_blob server_shared = {0};
-                struct s2n_blob client_shared = {0};
+        for (size_t i = 0; i < s2n_all_supported_curves_list_len; i++) {
+            for (size_t j = 0; j < s2n_all_supported_curves_list_len; j++) {
+                struct s2n_ecc_evp_params server_params = { 0 };
+                struct s2n_ecc_evp_params client_params = { 0 };
+                struct s2n_blob server_shared = { 0 };
+                struct s2n_blob client_shared = { 0 };
                 if (i == j) {
                     continue;
                 }
@@ -117,24 +128,24 @@ int main(int argc, char **argv) {
 
                 /* Compute shared secret for server */
                 EXPECT_FAILURE(
-                    s2n_ecc_evp_compute_shared_secret_from_params(&server_params, &client_params, &server_shared));
+                        s2n_ecc_evp_compute_shared_secret_from_params(&server_params, &client_params, &server_shared));
 
                 /* Compute shared secret for client */
                 EXPECT_FAILURE(
-                    s2n_ecc_evp_compute_shared_secret_from_params(&client_params, &server_params, &client_shared));
+                        s2n_ecc_evp_compute_shared_secret_from_params(&client_params, &server_params, &client_shared));
 
                 /* Clean up */
                 EXPECT_SUCCESS(s2n_ecc_evp_params_free(&server_params));
                 EXPECT_SUCCESS(s2n_ecc_evp_params_free(&client_params));
             }
         }
-    }
+    };
     {
         /* Test s2n_ecc_evp_write_params_point for all supported curves */
-        for (int i = 0; i < s2n_all_supported_curves_list_len; i++) {
-            struct s2n_ecc_evp_params test_params = {0};
-            struct s2n_stuffer wire;
-            uint8_t legacy_form;
+        for (size_t i = 0; i < s2n_all_supported_curves_list_len; i++) {
+            struct s2n_ecc_evp_params test_params = { 0 };
+            struct s2n_stuffer wire = { 0 };
+            uint8_t legacy_form = 0;
 
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&wire, 0));
 
@@ -150,8 +161,7 @@ int main(int argc, char **argv) {
 
             /* Verify output starts with the known legacy form for curves secp256r1
              * and secp384r1*/
-            if (s2n_all_supported_curves_list[i]->iana_id == TLS_EC_CURVE_SECP_256_R1 ||
-                s2n_all_supported_curves_list[i]->iana_id == TLS_EC_CURVE_SECP_384_R1) {
+            if (s2n_all_supported_curves_list[i]->iana_id == TLS_EC_CURVE_SECP_256_R1 || s2n_all_supported_curves_list[i]->iana_id == TLS_EC_CURVE_SECP_384_R1) {
                 EXPECT_SUCCESS(s2n_stuffer_read_uint8(&wire, &legacy_form));
                 EXPECT_EQUAL(legacy_form, ECDHE_PARAMS_LEGACY_FORM);
             }
@@ -160,13 +170,13 @@ int main(int argc, char **argv) {
             EXPECT_SUCCESS(s2n_ecc_evp_params_free(&test_params));
             EXPECT_SUCCESS(s2n_stuffer_free(&wire));
         }
-    }
+    };
     {
         /* TEST s2n_ecc_evp_read_params_point for all supported curves */
-        for (int i = 0; i < s2n_all_supported_curves_list_len; i++) {
-            struct s2n_ecc_evp_params write_params = {0};
-            struct s2n_blob point_blob;
-            struct s2n_stuffer wire;
+        for (size_t i = 0; i < s2n_all_supported_curves_list_len; i++) {
+            struct s2n_ecc_evp_params write_params = { 0 };
+            struct s2n_blob point_blob = { 0 };
+            struct s2n_stuffer wire = { 0 };
 
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&wire, 0));
 
@@ -178,7 +188,7 @@ int main(int argc, char **argv) {
 
             /* Read point back in */
             EXPECT_SUCCESS(
-                s2n_ecc_evp_read_params_point(&wire, s2n_all_supported_curves_list[i]->share_size, &point_blob));
+                    s2n_ecc_evp_read_params_point(&wire, s2n_all_supported_curves_list[i]->share_size, &point_blob));
 
             /* Check that the blob looks generally correct. */
             EXPECT_EQUAL(point_blob.size, s2n_all_supported_curves_list[i]->share_size);
@@ -187,14 +197,14 @@ int main(int argc, char **argv) {
             EXPECT_SUCCESS(s2n_ecc_evp_params_free(&write_params));
             EXPECT_SUCCESS(s2n_stuffer_free(&wire));
         }
-    }
+    };
     {
         /* TEST s2n_ecc_evp_parse_params_point for all supported curves */
-        for (int i = 0; i < s2n_all_supported_curves_list_len; i++) {
-            struct s2n_ecc_evp_params write_params = {0};
-            struct s2n_ecc_evp_params read_params = {0};
-            struct s2n_blob point_blob;
-            struct s2n_stuffer wire;
+        for (size_t i = 0; i < s2n_all_supported_curves_list_len; i++) {
+            struct s2n_ecc_evp_params write_params = { 0 };
+            struct s2n_ecc_evp_params read_params = { 0 };
+            struct s2n_blob point_blob = { 0 };
+            struct s2n_stuffer wire = { 0 };
 
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&wire, 0));
 
@@ -208,7 +218,7 @@ int main(int argc, char **argv) {
 
             /* Read point back in */
             EXPECT_SUCCESS(
-                s2n_ecc_evp_read_params_point(&wire, s2n_all_supported_curves_list[i]->share_size, &point_blob));
+                    s2n_ecc_evp_read_params_point(&wire, s2n_all_supported_curves_list[i]->share_size, &point_blob));
             EXPECT_SUCCESS(s2n_ecc_evp_parse_params_point(&point_blob, &read_params));
             /* Check that the point we read is the same we wrote */
             EXPECT_TRUE(EVP_PKEY_cmp(write_params.evp_pkey, read_params.evp_pkey));
@@ -218,17 +228,17 @@ int main(int argc, char **argv) {
             EXPECT_SUCCESS(s2n_ecc_evp_params_free(&read_params));
             EXPECT_SUCCESS(s2n_stuffer_free(&wire));
         }
-    }
+    };
     {
         DEFER_CLEANUP(struct s2n_connection* conn = s2n_connection_new(S2N_CLIENT),
                 s2n_connection_ptr_free);
         EXPECT_NOT_NULL(conn);
         EXPECT_SUCCESS(s2n_connection_set_cipher_preferences(conn, "test_all"));
         /* Test read/write/parse params for all supported curves */
-        for (int i = 0; i < s2n_all_supported_curves_list_len; i++) {
-            struct s2n_ecc_evp_params write_params = {0};
-            struct s2n_ecc_evp_params read_params = {0};
-            struct s2n_stuffer wire;
+        for (size_t i = 0; i < s2n_all_supported_curves_list_len; i++) {
+            struct s2n_ecc_evp_params write_params = { 0 };
+            struct s2n_ecc_evp_params read_params = { 0 };
+            struct s2n_stuffer wire = { 0 };
             struct s2n_blob ecdh_params_sent, ecdh_params_received;
 
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&wire, 1024));
@@ -240,11 +250,11 @@ int main(int argc, char **argv) {
             EXPECT_SUCCESS(s2n_ecc_evp_generate_ephemeral_key(&write_params));
             EXPECT_NOT_NULL(write_params.evp_pkey);
 
-             /* Write params points to wire */
+            /* Write params points to wire */
             EXPECT_SUCCESS(s2n_ecc_evp_write_params(&write_params, &wire, &ecdh_params_sent));
-            struct s2n_ecdhe_raw_server_params ecdhe_data = {0};
+            struct s2n_ecdhe_raw_server_params ecdhe_data = { 0 };
 
-             /* Read params points from the wire */
+            /* Read params points from the wire */
             EXPECT_SUCCESS(s2n_ecc_evp_read_params(&wire, &ecdh_params_received, &ecdhe_data));
             EXPECT_SUCCESS(s2n_ecc_evp_parse_params(conn, &ecdhe_data, &read_params));
 
@@ -256,17 +266,17 @@ int main(int argc, char **argv) {
             EXPECT_SUCCESS(s2n_ecc_evp_params_free(&write_params));
             EXPECT_SUCCESS(s2n_ecc_evp_params_free(&read_params));
         }
-    }
+    };
     {
         DEFER_CLEANUP(struct s2n_connection* conn = s2n_connection_new(S2N_CLIENT), s2n_connection_ptr_free);
         EXPECT_NOT_NULL(conn);
         EXPECT_SUCCESS(s2n_connection_set_cipher_preferences(conn, "test_all"));
         /* Test generate/read/write/parse and compute shared secrets for all supported curves */
-        for (int i = 0; i < s2n_all_supported_curves_list_len; i++) {
-            struct s2n_ecc_evp_params server_params = {0};
-            struct s2n_ecc_evp_params read_params = {0};
-            struct s2n_ecc_evp_params client_params = {0};
-            struct s2n_stuffer wire;
+        for (size_t i = 0; i < s2n_all_supported_curves_list_len; i++) {
+            struct s2n_ecc_evp_params server_params = { 0 };
+            struct s2n_ecc_evp_params read_params = { 0 };
+            struct s2n_ecc_evp_params client_params = { 0 };
+            struct s2n_stuffer wire = { 0 };
             struct s2n_blob ecdh_params_sent, ecdh_params_received;
             struct s2n_blob server_shared_secret, client_shared_secret;
 
@@ -283,27 +293,27 @@ int main(int argc, char **argv) {
             EXPECT_SUCCESS(s2n_ecc_evp_write_params(&server_params, &wire, &ecdh_params_sent));
 
             /* Client reads the public */
-            struct s2n_ecdhe_raw_server_params ecdhe_data = {0};
+            struct s2n_ecdhe_raw_server_params ecdhe_data = { 0 };
             EXPECT_SUCCESS(s2n_ecc_evp_read_params(&wire, &ecdh_params_received, &ecdhe_data));
             EXPECT_SUCCESS(s2n_ecc_evp_parse_params(conn, &ecdhe_data, &read_params));
 
             /* Verify if the client correctly read the server public */
             EXPECT_TRUE(EVP_PKEY_cmp(server_params.evp_pkey, read_params.evp_pkey));
 
-             /* Client generates its key for the given curve */
-            client_params.negotiated_curve =s2n_all_supported_curves_list[i];
+            /* Client generates its key for the given curve */
+            client_params.negotiated_curve = s2n_all_supported_curves_list[i];
             EXPECT_SUCCESS(s2n_ecc_evp_generate_ephemeral_key(&client_params));
             EXPECT_NOT_NULL(client_params.evp_pkey);
 
             /* Compute shared secret for the server */
             EXPECT_SUCCESS(
-                s2n_ecc_evp_compute_shared_secret_from_params(&server_params, &client_params, &server_shared_secret));
+                    s2n_ecc_evp_compute_shared_secret_from_params(&server_params, &client_params, &server_shared_secret));
 
             /* Compute shared secret for the client */
             EXPECT_SUCCESS(
-                s2n_ecc_evp_compute_shared_secret_from_params(&client_params, &read_params, &client_shared_secret));
+                    s2n_ecc_evp_compute_shared_secret_from_params(&client_params, &read_params, &client_shared_secret));
 
-             /* Verify that shared is the same for the client and the server */
+            /* Verify that shared is the same for the client and the server */
             EXPECT_EQUAL(client_shared_secret.size, server_shared_secret.size);
             EXPECT_BYTEARRAY_EQUAL(client_shared_secret.data, server_shared_secret.data, client_shared_secret.size);
 
@@ -315,15 +325,15 @@ int main(int argc, char **argv) {
             EXPECT_SUCCESS(s2n_ecc_evp_params_free(&read_params));
             EXPECT_SUCCESS(s2n_ecc_evp_params_free(&client_params));
         }
-    }
+    };
     {
         DEFER_CLEANUP(struct s2n_connection* conn = s2n_connection_new(S2N_CLIENT), s2n_connection_ptr_free);
         EXPECT_NOT_NULL(conn);
         EXPECT_SUCCESS(s2n_connection_set_cipher_preferences(conn, "test_all"));
         /* Test generate->write->read->compute_shared with all supported curves */
-        for (int i = 0; i < s2n_all_supported_curves_list_len; i++) {
-            struct s2n_ecc_evp_params server_params = {0}, client_params = {0};
-            struct s2n_stuffer wire;
+        for (size_t i = 0; i < s2n_all_supported_curves_list_len; i++) {
+            struct s2n_ecc_evp_params server_params = { 0 }, client_params = { 0 };
+            struct s2n_stuffer wire = { 0 };
             struct s2n_blob server_shared, client_shared, ecdh_params_sent, ecdh_params_received;
 
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&wire, 1024));
@@ -335,7 +345,7 @@ int main(int argc, char **argv) {
             /* Server sends the public */
             EXPECT_SUCCESS(s2n_ecc_evp_write_params(&server_params, &wire, &ecdh_params_sent));
             /* Client reads the public */
-            struct s2n_ecdhe_raw_server_params ecdhe_data = {0};
+            struct s2n_ecdhe_raw_server_params ecdhe_data = { 0 };
             EXPECT_SUCCESS(s2n_ecc_evp_read_params(&wire, &ecdh_params_received, &ecdhe_data));
             EXPECT_SUCCESS(s2n_ecc_evp_parse_params(conn, &ecdhe_data, &client_params));
 
@@ -357,7 +367,7 @@ int main(int argc, char **argv) {
             EXPECT_SUCCESS(s2n_ecc_evp_params_free(&server_params));
             EXPECT_SUCCESS(s2n_ecc_evp_params_free(&client_params));
         }
-    }
+    };
 
     /* Test that the client does not negotiate a group that was not
      * offered in EC preferences */
@@ -371,17 +381,17 @@ int main(int argc, char **argv) {
 
         /* Setup & verify invalid curves, which will be selected by a malicious server */
         const struct s2n_ecc_named_curve* const unrequested_curves[] = {
-                &s2n_unsupported_curve,
-                &s2n_ecc_curve_secp521r1,
+            &s2n_unsupported_curve,
+            &s2n_ecc_curve_secp521r1,
         };
 
         /* Verify that the client errors when the server attempts to
          * negotiate a curve that was never offered */
         for (size_t i = 0; i < s2n_array_len(unrequested_curves); i++) {
-            struct s2n_ecc_evp_params server_params = {0};
-            struct s2n_ecc_evp_params client_params = {0};
-            struct s2n_stuffer wire = {0};
-            struct s2n_blob ecdh_params_sent = {0}, ecdh_params_received = {0};
+            struct s2n_ecc_evp_params server_params = { 0 };
+            struct s2n_ecc_evp_params client_params = { 0 };
+            struct s2n_stuffer wire = { 0 };
+            struct s2n_blob ecdh_params_sent = { 0 }, ecdh_params_received = { 0 };
 
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&wire, 1024));
 
@@ -392,7 +402,7 @@ int main(int argc, char **argv) {
             /* Server sends the public */
             EXPECT_SUCCESS(s2n_ecc_evp_write_params(&server_params, &wire, &ecdh_params_sent));
             /* Client reads the public */
-            struct s2n_ecdhe_raw_server_params ecdhe_data = {0};
+            struct s2n_ecdhe_raw_server_params ecdhe_data = { 0 };
             EXPECT_SUCCESS(s2n_ecc_evp_read_params(&wire, &ecdh_params_received, &ecdhe_data));
             EXPECT_FAILURE_WITH_ERRNO(
                     s2n_ecc_evp_parse_params(conn, &ecdhe_data, &client_params), S2N_ERR_ECDHE_UNSUPPORTED_CURVE);
@@ -405,6 +415,80 @@ int main(int argc, char **argv) {
             EXPECT_SUCCESS(s2n_ecc_evp_params_free(&server_params));
             EXPECT_SUCCESS(s2n_ecc_evp_params_free(&client_params));
         }
+    };
+
+    /**
+     *= https://www.rfc-editor.org/rfc/rfc8446#section-4.2.8.2
+     *= type=test
+     *# For the curves secp256r1, secp384r1, and secp521r1, peers MUST
+     *# validate each other's public value Q by ensuring that the point is a
+     *# valid point on the elliptic curve.  The appropriate validation
+     *# procedures are defined in Section 4.3.7 of [ECDSA] and alternatively
+     *# in Section 5.6.2.3 of [KEYAGREEMENT].  This process consists of three
+     *# steps: (1) verify that Q is not the point at infinity (O), (2) verify
+     *# that for Q = (x, y) both integers x and y are in the correct
+     *# interval, and (3) ensure that (x, y) is a correct solution to the
+     *# elliptic curve equation.  For these curves, implementors do not need
+     *# to verify membership in the correct subgroup.
+     *
+     * s2n-tls performs this validation by invoking the libcrypto APIs: EC_KEY_check_key, and
+     * EC_KEY_check_fips. To ensure that these APIs are properly called, step (1) is invalidated.
+     */
+    {
+        const struct s2n_ecc_named_curve* const nist_curves[] = {
+            &s2n_ecc_curve_secp256r1,
+            &s2n_ecc_curve_secp384r1,
+            &s2n_ecc_curve_secp521r1,
+        };
+
+        for (size_t i = 0; i < s2n_array_len(nist_curves); i++) {
+            const struct s2n_ecc_named_curve* curve = nist_curves[i];
+
+            DEFER_CLEANUP(struct s2n_ecc_evp_params server_params = { 0 }, s2n_ecc_evp_params_free);
+            DEFER_CLEANUP(struct s2n_ecc_evp_params client_params = { 0 }, s2n_ecc_evp_params_free);
+            DEFER_CLEANUP(struct s2n_blob shared_key = { 0 }, s2n_free);
+
+            /* Create a server key. */
+            server_params.negotiated_curve = curve;
+            EXPECT_SUCCESS(s2n_ecc_evp_generate_ephemeral_key(&server_params));
+            EXPECT_NOT_NULL(server_params.evp_pkey);
+
+            /* Create a client key. */
+            client_params.negotiated_curve = curve;
+            EXPECT_SUCCESS(s2n_ecc_evp_generate_ephemeral_key(&client_params));
+            EXPECT_NOT_NULL(client_params.evp_pkey);
+
+            /* Retrieve the existing client public key. */
+            DEFER_CLEANUP(EC_KEY* ec_key = EVP_PKEY_get1_EC_KEY(client_params.evp_pkey),
+                    EC_KEY_free_pointer);
+            EXPECT_NOT_NULL(ec_key);
+            const EC_GROUP* group = EC_KEY_get0_group(ec_key);
+            EXPECT_NOT_NULL(group);
+            const EC_POINT* public_key = EC_KEY_get0_public_key(ec_key);
+            EXPECT_NOT_NULL(public_key);
+
+            /* Invalidate the public key by setting the coordinate to infinity. */
+            DEFER_CLEANUP(EC_POINT* invalid_public_key = EC_POINT_dup(public_key, group),
+                    EC_POINT_free_pointer);
+            EXPECT_NOT_NULL(invalid_public_key);
+            EXPECT_EQUAL(EC_POINT_set_to_infinity(group, invalid_public_key), 1);
+            EXPECT_EQUAL(EC_KEY_set_public_key(ec_key, invalid_public_key), 1);
+            EXPECT_EQUAL(EVP_PKEY_set1_EC_KEY(client_params.evp_pkey, ec_key), 1);
+
+            /* Compute the server's shared secret. */
+            int ret = s2n_ecc_evp_compute_shared_secret_from_params(&server_params,
+                    &client_params, &shared_key);
+
+            /* If s2n-tls is in FIPS mode and the libcrypto supports the EC_KEY_check_fips API,
+             * ensure that this API is called by checking for the correct error.
+             */
+            if (s2n_is_in_fips_mode() && s2n_ecc_evp_supports_fips_check()) {
+                EXPECT_FAILURE_WITH_ERRNO(ret, S2N_ERR_ECDHE_INVALID_PUBLIC_KEY_FIPS);
+            } else {
+                EXPECT_FAILURE_WITH_ERRNO(ret, S2N_ERR_ECDHE_INVALID_PUBLIC_KEY);
+            }
+        }
     }
+
     END_TEST();
 }

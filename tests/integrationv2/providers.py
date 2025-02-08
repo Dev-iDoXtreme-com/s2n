@@ -1,14 +1,13 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+import os
+import subprocess
 import pytest
 import threading
 
-from common import ProviderOptions, Ciphers, Curves, Protocols, Certificates, Signatures
+from common import ProviderOptions, Ciphers, Curves, Protocols, Signatures
 from global_flags import get_flag, S2N_PROVIDER_VERSION, S2N_FIPS_MODE
-
-
-TLS_13_LIBCRYPTOS = {
-    "awslc",
-    "openssl-1.1.1"
-}
+from stat import S_IMODE
 
 
 class Provider(object):
@@ -47,9 +46,9 @@ class Provider(object):
 
         self.options = options
         if self.options.mode == Provider.ServerMode:
-            self.cmd_line = self.setup_server()
+            self.cmd_line = self.setup_server()  # lgtm [py/init-calls-subclass]
         elif self.options.mode == Provider.ClientMode:
-            self.cmd_line = self.setup_client()
+            self.cmd_line = self.setup_client()  # lgtm [py/init-calls-subclass]
 
     def setup_client(self):
         """
@@ -141,7 +140,7 @@ class S2N(Provider):
     def __init__(self, options: ProviderOptions):
         Provider.__init__(self, options)
 
-        self.send_with_newline = True
+        self.send_with_newline = True  # lgtm [py/overwritten-inherited-attribute]
 
     @classmethod
     def get_send_marker(cls):
@@ -149,27 +148,53 @@ class S2N(Provider):
 
     @classmethod
     def supports_protocol(cls, protocol, with_cert=None):
-        # Disable TLS 1.3 tests for all libcryptos that don't support 1.3
+        # RSA-PSS is unsupported for openssl-1.0
+        # libressl and boringssl are disabled because of configuration issues
+        # see https://github.com/aws/s2n-tls/issues/3250
+        PSS_UNSUPPORTED_LIBCRYPTOS = {
+            "libressl",
+            "boringssl",
+            "openssl-1.0"
+        }
+        pss_is_unsupported = any([
+            # e.g. "openssl-1.0" in "openssl-1.0.2-fips"
+            libcrypto in get_flag(S2N_PROVIDER_VERSION)
+            for libcrypto in PSS_UNSUPPORTED_LIBCRYPTOS
+        ])
+        if pss_is_unsupported:
+            if protocol == Protocols.TLS13:
+                return False
+            if with_cert and with_cert.algorithm == 'RSAPSS':
+                return False
+
+        # SSLv3 cannot be negotiated in FIPS mode with libcryptos other than AWS-LC.
         if all([
-            libcrypto not in get_flag(S2N_PROVIDER_VERSION)
-            for libcrypto in TLS_13_LIBCRYPTOS
-        ]) and protocol == Protocols.TLS13:
+            protocol == Protocols.SSLv3,
+            get_flag(S2N_FIPS_MODE),
+            "awslc" not in get_flag(S2N_PROVIDER_VERSION)
+        ]):
             return False
 
         return True
 
     @classmethod
     def supports_cipher(cls, cipher, with_curve=None):
-        # Disable chacha20 tests in unsupported libcryptos
-        if any([
-            libcrypto in get_flag(S2N_PROVIDER_VERSION)
-            for libcrypto in [
-                "openssl-1.0.2",
-                "libressl"
-            ]
-        ]) and "CHACHA20" in cipher.name:
-            return False
+        # Disable chacha20 and RC4 tests in libcryptos that don't support those
+        # algorithms
+        unsupported_configurations = {
+            "CHACHA20": ["openssl-1.0.2", "libressl"],
+            "RC4": ["openssl-3"],
+        }
 
+        for unsupported_cipher, unsupported_libcryptos in unsupported_configurations.items():
+            # the queried cipher has some libcrypto's that don't support it
+            # e.g. "RC4" in "TLS_ECDHE_RSA_WITH_RC4_128_SHA"
+            if unsupported_cipher in cipher.name:
+                current_libcrypto = get_flag(S2N_PROVIDER_VERSION)
+                for lc in unsupported_libcryptos:
+                    # e.g. "openssl-3" in "openssl-3.0.7"
+                    if lc in current_libcrypto:
+                        return False
         return True
 
     @classmethod
@@ -309,13 +334,12 @@ class S2N(Provider):
 
 
 class OpenSSL(Provider):
-
-    _version = get_flag(S2N_PROVIDER_VERSION)
-
     def __init__(self, options: ProviderOptions):
         Provider.__init__(self, options)
         # We print some OpenSSL logging that includes stderr
-        self.expect_stderr = True
+        self.expect_stderr = True  # lgtm [py/overwritten-inherited-attribute]
+        # Current provider needs 1.1.x https://github.com/aws/s2n-tls/issues/3963
+        self._is_openssl_11()
 
     @classmethod
     def get_send_marker(cls):
@@ -364,30 +388,27 @@ class OpenSSL(Provider):
 
     @classmethod
     def get_version(cls):
-        return cls._version
+        return get_flag(S2N_PROVIDER_VERSION)
 
     @classmethod
     def supports_protocol(cls, protocol, with_cert=None):
+        if protocol is Protocols.SSLv3:
+            return False
+
         return True
 
     @classmethod
     def supports_cipher(cls, cipher, with_curve=None):
-        if "openssl-1.0.2" in get_flag(S2N_PROVIDER_VERSION) and with_curve is not None:
-            invalid_ciphers = [
-                Ciphers.ECDHE_RSA_AES128_SHA,
-                Ciphers.ECDHE_RSA_AES256_SHA,
-                Ciphers.ECDHE_RSA_AES128_SHA256,
-                Ciphers.ECDHE_RSA_AES256_SHA384,
-                Ciphers.ECDHE_RSA_AES128_GCM_SHA256,
-                Ciphers.ECDHE_RSA_AES256_GCM_SHA384,
-            ]
-
-            # OpenSSL 1.0.2 and 1.0.2-FIPS can't find a shared cipher with S2N
-            # when P-384 is used, but I can't find any reason why.
-            if with_curve is Curves.P384 and cipher in invalid_ciphers:
-                return False
-
         return True
+
+    def _is_openssl_11(self) -> None:
+        result = subprocess.run(["openssl", "version"], shell=False, capture_output=True, text=True)
+        version_str = result.stdout.split(" ")
+        project = version_str[0]
+        version = version_str[1]
+        print(f"openssl version: {project} version: {version}")
+        if (project != "OpenSSL" or version[0:3] != "1.1"):
+            raise FileNotFoundError(f"Openssl version returned {version}, expected 1.1.x.")
 
     def setup_client(self):
         cmd_line = ['openssl', 's_client']
@@ -395,7 +416,10 @@ class OpenSSL(Provider):
             ['-connect', '{}:{}'.format(self.options.host, self.options.port)])
 
         # Additional debugging that will be captured incase of failure
-        cmd_line.extend(['-debug', '-tlsextdebug', '-state'])
+        if self.options.verbose:
+            cmd_line.append('-debug')
+
+        cmd_line.extend(['-tlsextdebug', '-state'])
 
         if self.options.key is not None:
             cmd_line.extend(['-key', self.options.key])
@@ -410,6 +434,8 @@ class OpenSSL(Provider):
             cmd_line.append('-tls1_1')
         elif self.options.protocol == Protocols.TLS10:
             cmd_line.append('-tls1')
+        elif self.options.protocol == Protocols.SSLv3:
+            cmd_line.append('-ssl3')
 
         if self.options.cipher is not None:
             cmd_line.extend(self._cipher_to_cmdline(self.options.cipher))
@@ -465,7 +491,10 @@ class OpenSSL(Provider):
             cmd_line.extend(['-naccept', '1'])
 
         # Additional debugging that will be captured incase of failure
-        cmd_line.extend(['-debug', '-tlsextdebug', '-state'])
+        if self.options.verbose:
+            cmd_line.append('-debug')
+
+        cmd_line.extend(['-tlsextdebug', '-state'])
 
         if self.options.cert is not None:
             cmd_line.extend(['-cert', self.options.cert])
@@ -482,6 +511,8 @@ class OpenSSL(Provider):
             cmd_line.append('-tls1_1')
         elif self.options.protocol == Protocols.TLS10:
             cmd_line.append('-tls1')
+        elif self.options.protocol == Protocols.SSLv3:
+            cmd_line.append('-ssl3')
 
         if self.options.cipher is not None:
             cmd_line.extend(self._cipher_to_cmdline(self.options.cipher))
@@ -507,9 +538,29 @@ class OpenSSL(Provider):
         return cmd_line
 
 
+class SSLv3Provider(OpenSSL):
+    def __init__(self, options: ProviderOptions):
+        OpenSSL.__init__(self, options)
+        self._override_libssl(options)
+
+    def _override_libssl(self, options: ProviderOptions):
+        install_dir = os.environ["OPENSSL_1_0_2_INSTALL_DIR"]
+
+        override_env_vars = dict()
+        override_env_vars["PATH"] = install_dir + "/bin"
+        override_env_vars["LD_LIBRARY_PATH"] = install_dir + "/lib"
+        options.env_overrides = override_env_vars
+
+    @classmethod
+    def supports_protocol(cls, protocol, with_cert=None):
+        if protocol is Protocols.SSLv3:
+            return True
+        return False
+
+
 class JavaSSL(Provider):
     """
-    NOTE: Only a Java SSL client has been set up. The server has not been 
+    NOTE: Only a Java SSL client has been set up. The server has not been
     implemented yet.
     """
 
@@ -522,7 +573,8 @@ class JavaSSL(Provider):
 
     @classmethod
     def supports_protocol(cls, protocol, with_cert=None):
-        if protocol is Protocols.TLS10:
+        # https://aws.amazon.com/blogs/opensource/tls-1-0-1-1-changes-in-openjdk-and-amazon-corretto/
+        if protocol is Protocols.SSLv3 or protocol is Protocols.TLS10 or protocol is Protocols.TLS11:
             return False
 
         return True
@@ -548,12 +600,15 @@ class JavaSSL(Provider):
             cmd_line.extend([self.options.trust_store])
         elif self.options.cert:
             cmd_line.extend([self.options.cert])
+        if self.options.cipher.iana_standard_name is not None:
+            cmd_line.extend([self.options.cipher.iana_standard_name])
 
         if self.options.protocol is not None:
             cmd_line.extend([self.options.protocol.name])
-
-        if self.options.cipher.iana_standard_name is not None:
-            cmd_line.extend([self.options.cipher.iana_standard_name])
+        # SSLv2ClientHello is a "protocol" for Java TLS, so we append it next to
+        # the existing protocol.
+        if self.options.extra_flags is not None:
+            cmd_line.extend(self.options.extra_flags)
 
         # Clients are always ready to connect
         self.set_provider_ready()
@@ -576,7 +631,31 @@ class BoringSSL(Provider):
         return 'Cert issuer:'
 
     def setup_server(self):
-        pytest.skip('BoringSSL does not support server mode at this time')
+        cmd_line = ['bssl', 's_server']
+        cmd_line.extend(['-accept', self.options.port])
+        if self.options.cert is not None:
+            cmd_line.extend(['-cert', self.options.cert])
+        if self.options.key is not None:
+            cmd_line.extend(['-key', self.options.key])
+        if self.options.curve is not None:
+            if self.options.curve == Curves.P256:
+                cmd_line.extend(['-curves', 'P-256'])
+            elif self.options.curve == Curves.P384:
+                cmd_line.extend(['-curves', 'P-384'])
+            elif self.options.curve == Curves.P521:
+                cmd_line.extend(['-curves', 'P-521'])
+            elif self.options.curve == Curves.SecP256r1Kyber768Draft00:
+                cmd_line.extend(['-curves', 'SecP256r1Kyber768Draft00'])
+            elif self.options.curve == Curves.X25519Kyber768Draft00:
+                cmd_line.extend(['-curves', 'X25519Kyber768Draft00'])
+            elif self.options.curve == Curves.X25519:
+                pytest.skip('BoringSSL does not support curve {}'.format(
+                    self.options.curve))
+
+        if self.options.extra_flags is not None:
+            cmd_line.extend(self.options.extra_flags)
+
+        return cmd_line
 
     def setup_client(self):
         cmd_line = ['bssl', 's_client']
@@ -603,9 +682,16 @@ class BoringSSL(Provider):
                 cmd_line.extend(['-curves', 'P-384'])
             elif self.options.curve == Curves.P521:
                 cmd_line.extend(['-curves', 'P-521'])
+            elif self.options.curve == Curves.SecP256r1Kyber768Draft00:
+                cmd_line.extend(['-curves', 'SecP256r1Kyber768Draft00'])
+            elif self.options.curve == Curves.X25519Kyber768Draft00:
+                cmd_line.extend(['-curves', 'X25519Kyber768Draft00'])
             elif self.options.curve == Curves.X25519:
                 pytest.skip('BoringSSL does not support curve {}'.format(
                     self.options.curve))
+
+        if self.options.extra_flags is not None:
+            cmd_line.extend(self.options.extra_flags)
 
         # Clients are always ready to connect
         self.set_provider_ready()
@@ -617,8 +703,8 @@ class GnuTLS(Provider):
     def __init__(self, options: ProviderOptions):
         Provider.__init__(self, options)
 
-        self.expect_stderr = True
-        self.send_with_newline = True
+        self.expect_stderr = True  # lgtm [py/overwritten-inherited-attribute]
+        self.send_with_newline = True  # lgtm [py/overwritten-inherited-attribute]
 
     @staticmethod
     def cipher_to_priority_str(cipher):
@@ -656,6 +742,8 @@ class GnuTLS(Provider):
 
     @staticmethod
     def protocol_to_priority_str(protocol):
+        if not protocol:
+            return None
         return {
             Protocols.TLS10.value: "VERS-TLS1.0",
             Protocols.TLS11.value: "VERS-TLS1.1",
@@ -688,27 +776,27 @@ class GnuTLS(Provider):
     def create_priority_str(self):
         priority_str = "NONE"
 
-        if self.options.protocol:
-            priority_str += ":+" + \
-                self.protocol_to_priority_str(self.options.protocol)
+        protocol_to_priority_str = self.protocol_to_priority_str(self.options.protocol)
+        if protocol_to_priority_str:
+            priority_str += ":+" + protocol_to_priority_str
         else:
             priority_str += ":+VERS-ALL"
 
-        if self.options.cipher:
-            priority_str += ":+" + \
-                self.cipher_to_priority_str(self.options.cipher)
+        cipher_to_priority_str = self.cipher_to_priority_str(self.options.cipher)
+        if cipher_to_priority_str:
+            priority_str += ":+" + cipher_to_priority_str
         else:
             priority_str += ":+KX-ALL:+CIPHER-ALL:+MAC-ALL"
 
-        if self.options.curve:
-            priority_str += ":+" + \
-                self.curve_to_priority_str(self.options.curve)
+        curve_to_priority_str = self.curve_to_priority_str(self.options.curve)
+        if curve_to_priority_str:
+            priority_str += ":+" + curve_to_priority_str
         else:
             priority_str += ":+GROUP-ALL"
 
-        if self.options.signature_algorithm:
-            priority_str += ":+" + \
-                self.sigalg_to_priority_str(self.options.signature_algorithm)
+        sigalg_to_priority_str = self.sigalg_to_priority_str(self.options.signature_algorithm)
+        if sigalg_to_priority_str:
+            priority_str += ":+" + sigalg_to_priority_str
         else:
             priority_str += ":+SIGN-ALL"
 
@@ -730,9 +818,11 @@ class GnuTLS(Provider):
             "gnutls-cli",
             "--port", str(self.options.port),
             self.options.host,
-            "--debug", "9999",
-            "--verbose"
+            "--debug", "9999"
         ]
+
+        if self.options.verbose:
+            cmd_line.append("--verbose")
 
         if self.options.cert and self.options.key:
             cmd_line.extend(["--x509certfile", self.options.cert])
@@ -799,3 +889,29 @@ class GnuTLS(Provider):
     @classmethod
     def supports_signature(cls, signature):
         return GnuTLS.sigalg_to_priority_str(signature) is not None
+
+
+def find_files(file_glob, root_dir=".", modes=[]):
+    """
+    find util in python form.
+    file_glob: a snippet of the filename, e.g. ".py"
+    root_dir: starting point for search
+    mode is an octal representation of owner/group/other, e.g.: '0o644'
+    """
+    result = []
+    for root, dirs, files in os.walk(root_dir):
+        for file in files:
+            if file_glob in file:
+                full_name = os.path.abspath(os.path.join(root, file))
+                if len(modes) != 0:
+                    try:
+                        stat = oct(S_IMODE(os.stat(full_name).st_mode))
+                        if stat in modes:
+                            result.append(full_name)
+                    except FileNotFoundError:
+                        # symlinks
+                        pass
+                else:
+                    result.append(full_name)
+
+    return result

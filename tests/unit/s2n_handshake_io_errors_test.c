@@ -14,7 +14,6 @@
  */
 
 #include "api/s2n.h"
-
 #include "s2n_test.h"
 #include "testlib/s2n_testlib.h"
 #include "utils/s2n_result.h"
@@ -39,13 +38,13 @@ int main(int argc, char **argv)
         EXPECT_FAILURE_WITH_ERRNO(s2n_negotiate(server_conn, &blocked), S2N_ERR_IO_BLOCKED);
 
         /* Error did not close connection */
-        EXPECT_FALSE(server_conn->closed);
+        EXPECT_TRUE(s2n_connection_check_io_status(server_conn, S2N_IO_FULL_DUPLEX));
 
         /* Error did not trigger blinding */
         EXPECT_EQUAL(s2n_connection_get_delay(server_conn), 0);
 
         EXPECT_SUCCESS(s2n_connection_free(server_conn));
-    }
+    };
 
     /* Failure in read handler closes connection and invokes blinding */
     {
@@ -79,15 +78,14 @@ int main(int argc, char **argv)
                 S2N_ERR_BAD_MESSAGE);
 
         /* Error closes connection */
-        EXPECT_TRUE(server_conn->closed);
+        EXPECT_TRUE(s2n_connection_check_io_status(server_conn, S2N_IO_CLOSED));
 
         /* Error triggers blinding */
         EXPECT_NOT_EQUAL(s2n_connection_get_delay(server_conn), 0);
 
         EXPECT_SUCCESS(s2n_connection_free(client_conn));
         EXPECT_SUCCESS(s2n_connection_free(server_conn));
-
-    }
+    };
 
     /* Decrypt failure closes connection and invokes blinding */
     {
@@ -118,14 +116,14 @@ int main(int argc, char **argv)
                 S2N_ERR_DECRYPT);
 
         /* Error closes connection */
-        EXPECT_TRUE(server_conn->closed);
+        EXPECT_TRUE(s2n_connection_check_io_status(server_conn, S2N_IO_CLOSED));
 
         /* Error triggers blinding */
         EXPECT_NOT_EQUAL(s2n_connection_get_delay(server_conn), 0);
 
         EXPECT_SUCCESS(s2n_connection_free(client_conn));
         EXPECT_SUCCESS(s2n_connection_free(server_conn));
-    }
+    };
 
     END_TEST();
 }

@@ -13,16 +13,15 @@
  * permissions and limitations under the License.
  */
 
-#include "s2n_test.h"
-
-#include <string.h>
 #include <stdio.h>
-#include "api/s2n.h"
+#include <string.h>
 
-#include "tls/extensions/s2n_server_supported_versions.h"
-#include "tls/extensions/s2n_server_signature_algorithms.h"
+#include "api/s2n.h"
+#include "s2n_test.h"
 #include "stuffer/s2n_stuffer.h"
 #include "testlib/s2n_testlib.h"
+#include "tls/extensions/s2n_server_signature_algorithms.h"
+#include "tls/extensions/s2n_server_supported_versions.h"
 #include "tls/s2n_tls.h"
 #include "tls/s2n_tls13.h"
 #include "utils/s2n_safety.h"
@@ -34,21 +33,21 @@ int main(int argc, char **argv)
 
     /* Test correct required extension (sig_alg) sent and received */
     {
-        struct s2n_connection *conn;
+        struct s2n_connection *conn = NULL;
         EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
         conn->actual_protocol_version = S2N_TLS13;
 
-        EXPECT_EQUAL(conn->handshake_params.server_sig_hash_algs.len, 0);
+        EXPECT_EQUAL(conn->handshake_params.peer_sig_scheme_list.len, 0);
         EXPECT_SUCCESS(s2n_tls13_cert_req_send(conn));
         EXPECT_SUCCESS(s2n_tls13_cert_req_recv(conn));
-        EXPECT_NOT_EQUAL(conn->handshake_params.server_sig_hash_algs.len, 0);
+        EXPECT_NOT_EQUAL(conn->handshake_params.peer_sig_scheme_list.len, 0);
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
     }
 
     /* Test client fails to parse certificate request with no extensions */
     {
-        struct s2n_connection *client_conn;
+        struct s2n_connection *client_conn = NULL;
         EXPECT_NOT_NULL(client_conn = s2n_connection_new(S2N_CLIENT));
         client_conn->actual_protocol_version = S2N_TLS13;
 
@@ -59,7 +58,7 @@ int main(int argc, char **argv)
         EXPECT_FAILURE_WITH_ERRNO(s2n_tls13_cert_req_recv(client_conn), S2N_ERR_MISSING_EXTENSION);
 
         EXPECT_SUCCESS(s2n_connection_free(client_conn));
-    }
+    };
 
     EXPECT_SUCCESS(s2n_disable_tls13_in_test());
     END_TEST();

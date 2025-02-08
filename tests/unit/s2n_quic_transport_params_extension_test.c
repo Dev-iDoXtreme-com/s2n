@@ -15,9 +15,7 @@
 
 #include "s2n_test.h"
 #include "tests/testlib/s2n_testlib.h"
-
 #include "tls/extensions/s2n_quic_transport_params.h"
-
 #include "tls/s2n_connection.h"
 #include "tls/s2n_quic_support.h"
 #include "tls/s2n_tls13.h"
@@ -29,15 +27,15 @@ int main(int argc, char **argv)
     BEGIN_TEST();
 
     if (!s2n_is_tls13_fully_supported()) {
-       END_TEST();
+        END_TEST();
     }
 
     /* Test should_send */
     {
-        struct s2n_config *config;
+        struct s2n_config *config = NULL;
         EXPECT_NOT_NULL(config = s2n_config_new());
 
-        struct s2n_connection *conn;
+        struct s2n_connection *conn = NULL;
         EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
         EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
 
@@ -53,14 +51,14 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
         EXPECT_SUCCESS(s2n_config_free(config));
-    }
+    };
 
     /* Test if_missing */
     {
-        struct s2n_config *config;
+        struct s2n_config *config = NULL;
         EXPECT_NOT_NULL(config = s2n_config_new());
 
-        struct s2n_connection *conn;
+        struct s2n_connection *conn = NULL;
         EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
         EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
 
@@ -72,7 +70,7 @@ int main(int argc, char **argv)
 
         /* Fails if quic enabled
          *
-         *= https://tools.ietf.org/rfc/rfc9001.txt#8.2
+         *= https://www.rfc-editor.org/rfc/rfc9001#8.2
          *= type=test
          *# Endpoints MUST send the quic_transport_parameters extension; endpoints that receive
          *# ClientHello or EncryptedExtensions messages without the quic_transport_parameters
@@ -85,7 +83,7 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
         EXPECT_SUCCESS(s2n_config_free(config));
-    }
+    };
 
     /* Test send */
     {
@@ -93,25 +91,25 @@ int main(int argc, char **argv)
         {
             struct s2n_stuffer out = { 0 };
 
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
 
             EXPECT_FAILURE_WITH_ERRNO(s2n_quic_transport_parameters_extension.send(NULL, &out), S2N_ERR_NULL);
             EXPECT_FAILURE_WITH_ERRNO(s2n_quic_transport_parameters_extension.send(conn, NULL), S2N_ERR_NULL);
 
             EXPECT_SUCCESS(s2n_connection_free(conn));
-        }
+        };
 
         /* Writes transport parameters */
         {
             struct s2n_stuffer out = { 0 };
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&out, 0));
 
-            struct s2n_config *config;
+            struct s2n_config *config = NULL;
             EXPECT_NOT_NULL(config = s2n_config_new());
             EXPECT_SUCCESS(s2n_config_enable_quic(config));
 
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
             EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
             EXPECT_SUCCESS(s2n_connection_set_quic_transport_parameters(conn, TEST_DATA, sizeof(TEST_DATA)));
@@ -122,18 +120,18 @@ int main(int argc, char **argv)
             EXPECT_SUCCESS(s2n_connection_free(conn));
             EXPECT_SUCCESS(s2n_config_free(config));
             EXPECT_SUCCESS(s2n_stuffer_free(&out));
-        }
+        };
 
         /* Writes empty transport parameters */
         {
             struct s2n_stuffer out = { 0 };
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&out, 0));
 
-            struct s2n_config *config;
+            struct s2n_config *config = NULL;
             EXPECT_NOT_NULL(config = s2n_config_new());
             EXPECT_SUCCESS(s2n_config_enable_quic(config));
 
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
             EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
 
@@ -143,8 +141,8 @@ int main(int argc, char **argv)
             EXPECT_SUCCESS(s2n_connection_free(conn));
             EXPECT_SUCCESS(s2n_config_free(config));
             EXPECT_SUCCESS(s2n_stuffer_free(&out));
-        }
-    }
+        };
+    };
 
     /* Test recv */
     {
@@ -152,7 +150,7 @@ int main(int argc, char **argv)
         {
             struct s2n_stuffer extension = { 0 };
 
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
 
             EXPECT_FAILURE_WITH_ERRNO(s2n_quic_transport_parameters_extension.recv(NULL, &extension), S2N_ERR_NULL);
@@ -161,15 +159,15 @@ int main(int argc, char **argv)
                     S2N_ERR_UNSUPPORTED_EXTENSION);
 
             EXPECT_SUCCESS(s2n_connection_free(conn));
-        }
+        };
 
         /* Save transport parameters */
         {
-            struct s2n_config *config;
+            struct s2n_config *config = NULL;
             EXPECT_NOT_NULL(config = s2n_config_new());
             EXPECT_SUCCESS(s2n_config_enable_quic(config));
 
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
             EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
 
@@ -183,15 +181,15 @@ int main(int argc, char **argv)
             EXPECT_SUCCESS(s2n_connection_free(conn));
             EXPECT_SUCCESS(s2n_config_free(config));
             EXPECT_SUCCESS(s2n_stuffer_free(&extension));
-        }
+        };
 
         /* Save empty transport parameters */
         {
-            struct s2n_config *config;
+            struct s2n_config *config = NULL;
             EXPECT_NOT_NULL(config = s2n_config_new());
             EXPECT_SUCCESS(s2n_config_enable_quic(config));
 
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
             EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
 
@@ -202,22 +200,22 @@ int main(int argc, char **argv)
 
             EXPECT_SUCCESS(s2n_connection_free(conn));
             EXPECT_SUCCESS(s2n_config_free(config));
-        }
+        };
 
         /* recv processes the output of send */
         {
             struct s2n_stuffer out = { 0 };
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&out, 0));
 
-            struct s2n_config *config;
+            struct s2n_config *config = NULL;
             EXPECT_NOT_NULL(config = s2n_config_new());
             EXPECT_SUCCESS(s2n_config_enable_quic(config));
 
-            struct s2n_connection *server_conn;
+            struct s2n_connection *server_conn = NULL;
             EXPECT_NOT_NULL(server_conn = s2n_connection_new(S2N_SERVER));
             EXPECT_SUCCESS(s2n_connection_set_config(server_conn, config));
 
-            struct s2n_connection *client_conn;
+            struct s2n_connection *client_conn = NULL;
             EXPECT_NOT_NULL(client_conn = s2n_connection_new(S2N_CLIENT));
             EXPECT_SUCCESS(s2n_connection_set_config(client_conn, config));
             EXPECT_SUCCESS(s2n_connection_set_quic_transport_parameters(client_conn, TEST_DATA, sizeof(TEST_DATA)));
@@ -231,8 +229,8 @@ int main(int argc, char **argv)
             EXPECT_SUCCESS(s2n_connection_free(server_conn));
             EXPECT_SUCCESS(s2n_config_free(config));
             EXPECT_SUCCESS(s2n_stuffer_free(&out));
-        }
-    }
+        };
+    };
 
     END_TEST();
 }

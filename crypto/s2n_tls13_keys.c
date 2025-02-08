@@ -13,18 +13,15 @@
  * permissions and limitations under the License.
  */
 
-#include <stdio.h>
-
-#include "error/s2n_errno.h"
-
-#include "stuffer/s2n_stuffer.h"
-
-#include "crypto/s2n_hmac.h"
-#include "crypto/s2n_hkdf.h"
 #include "crypto/s2n_tls13_keys.h"
 
+#include <stdio.h>
+
+#include "crypto/s2n_hkdf.h"
+#include "crypto/s2n_hmac.h"
+#include "error/s2n_errno.h"
+#include "stuffer/s2n_stuffer.h"
 #include "utils/s2n_blob.h"
-#include "utils/s2n_safety.h"
 #include "utils/s2n_mem.h"
 #include "utils/s2n_safety.h"
 
@@ -40,7 +37,7 @@
  * [x] server_handshake_traffic_secret
  * [x] client_application_traffic_secret_0
  * [x] server_application_traffic_secret_0
- * [ ] exporter_master_secret
+ * [x] exporter_master_secret
  * [x] resumption_master_secret
  *
  * The TLS 1.3 key generation can be divided into 3 phases
@@ -83,6 +80,11 @@ S2N_BLOB_LABEL(s2n_tls13_label_traffic_secret_key, "key")
 S2N_BLOB_LABEL(s2n_tls13_label_traffic_secret_iv, "iv")
 
 /*
+ * TLS 1.3 Exporter label
+ */
+S2N_BLOB_LABEL(s2n_tls13_label_exporter, "exporter")
+
+/*
  * TLS 1.3 Finished label
  */
 S2N_BLOB_LABEL(s2n_tls13_label_finished, "finished")
@@ -114,7 +116,8 @@ int s2n_tls13_keys_init(struct s2n_tls13_keys *keys, s2n_hmac_algorithm alg)
 /*
  * Frees any allocation
  */
-int s2n_tls13_keys_free(struct s2n_tls13_keys *keys) {
+int s2n_tls13_keys_free(struct s2n_tls13_keys *keys)
+{
     POSIX_ENSURE_REF(keys);
 
     POSIX_GUARD(s2n_hmac_free(&keys->hmac));
@@ -133,9 +136,9 @@ int s2n_tls13_derive_traffic_keys(struct s2n_tls13_keys *keys, struct s2n_blob *
     POSIX_ENSURE_REF(iv);
 
     POSIX_GUARD(s2n_hkdf_expand_label(&keys->hmac, keys->hmac_algorithm, secret,
-        &s2n_tls13_label_traffic_secret_key, &zero_length_blob, key));
+            &s2n_tls13_label_traffic_secret_key, &zero_length_blob, key));
     POSIX_GUARD(s2n_hkdf_expand_label(&keys->hmac, keys->hmac_algorithm, secret,
-        &s2n_tls13_label_traffic_secret_iv, &zero_length_blob, iv));
+            &s2n_tls13_label_traffic_secret_iv, &zero_length_blob, iv));
     return 0;
 }
 
@@ -173,12 +176,12 @@ int s2n_tls13_update_application_traffic_secret(struct s2n_tls13_keys *keys, str
     POSIX_ENSURE_REF(new_secret);
 
     POSIX_GUARD(s2n_hkdf_expand_label(&keys->hmac, keys->hmac_algorithm, old_secret,
-                                &s2n_tls13_label_application_traffic_secret_update, &zero_length_blob, new_secret));
+            &s2n_tls13_label_application_traffic_secret_update, &zero_length_blob, new_secret));
 
     return 0;
 }
 
-S2N_RESULT s2n_tls13_derive_session_ticket_secret(struct s2n_tls13_keys *keys, struct s2n_blob *resumption_secret, 
+S2N_RESULT s2n_tls13_derive_session_ticket_secret(struct s2n_tls13_keys *keys, struct s2n_blob *resumption_secret,
         struct s2n_blob *ticket_nonce, struct s2n_blob *secret_blob)
 {
     RESULT_ENSURE_REF(keys);
@@ -188,7 +191,7 @@ S2N_RESULT s2n_tls13_derive_session_ticket_secret(struct s2n_tls13_keys *keys, s
 
     /* Derive session ticket secret from master session resumption secret */
     RESULT_GUARD_POSIX(s2n_hkdf_expand_label(&keys->hmac, keys->hmac_algorithm, resumption_secret,
-        &s2n_tls13_label_session_ticket_secret, ticket_nonce, secret_blob));
+            &s2n_tls13_label_session_ticket_secret, ticket_nonce, secret_blob));
 
     return S2N_RESULT_OK;
 }

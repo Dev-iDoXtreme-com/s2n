@@ -14,10 +14,8 @@
  */
 
 #include "api/s2n.h"
-
-#include "tls/extensions/s2n_early_data_indication.h"
-
 #include "stuffer/s2n_stuffer.h"
+#include "tls/extensions/s2n_early_data_indication.h"
 #include "tls/s2n_connection.h"
 #include "tls/s2n_early_data.h"
 #include "utils/s2n_safety.h"
@@ -32,7 +30,7 @@ static bool s2n_nst_early_data_indication_should_send(struct s2n_connection *con
 /**
  * The client version of this extension is empty, so we don't read/write any data.
  *
- *= https://tools.ietf.org/rfc/rfc8446#section-4.2.10
+ *= https://www.rfc-editor.org/rfc/rfc8446#section-4.2.10
  *# The "extension_data" field of this extension contains an
  *# "EarlyDataIndication" value.
  *#
@@ -42,7 +40,7 @@ static bool s2n_nst_early_data_indication_should_send(struct s2n_connection *con
  *#         select (Handshake.msg_type) {
  *#             case new_session_ticket:   uint32 max_early_data_size;
  **
- *= https://tools.ietf.org/rfc/rfc8446#section-4.2.10
+ *= https://www.rfc-editor.org/rfc/rfc8446#section-4.2.10
  *#         };
  *#     } EarlyDataIndication;
  **/
