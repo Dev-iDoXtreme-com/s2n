@@ -24,14 +24,12 @@ PROOF_SOURCES += $(OPENSSL_SOURCE)/ec_override.c
 PROOF_SOURCES += $(OPENSSL_SOURCE)/evp_override.c
 PROOF_SOURCES += $(PROOF_SOURCE)/make_common_datastructures.c
 PROOF_SOURCES += $(PROOF_STUB)/s2n_calculate_stacktrace.c
-PROOF_SOURCES += $(PROOF_STUB)/s2n_is_in_fips_mode.c
+PROOF_SOURCES += $(PROOF_STUB)/s2n_evp_signing_supported.c
 PROOF_SOURCES += $(PROOFDIR)/$(HARNESS_FILE)
 
 PROJECT_SOURCES += $(SRCDIR)/crypto/s2n_hash.c
 PROJECT_SOURCES += $(SRCDIR)/crypto/s2n_hmac.c
-PROJECT_SOURCES += $(SRCDIR)/crypto/s2n_evp.c
 PROJECT_SOURCES += $(SRCDIR)/utils/s2n_ensure.c
-PROJECT_SOURCES += $(SRCDIR)/utils/s2n_result.c
 PROJECT_SOURCES += $(SRCDIR)/utils/s2n_safety.c
 
 # We abstract these functions because manual inspection demonstrates they are unreachable.

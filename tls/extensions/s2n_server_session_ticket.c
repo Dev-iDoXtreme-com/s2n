@@ -13,12 +13,12 @@
  * permissions and limitations under the License.
  */
 
-#include "stuffer/s2n_stuffer.h"
+#include "tls/extensions/s2n_server_session_ticket.h"
 
-#include "tls/s2n_tls_parameters.h"
+#include "stuffer/s2n_stuffer.h"
 #include "tls/s2n_connection.h"
 #include "tls/s2n_tls.h"
-#include "tls/extensions/s2n_server_session_ticket.h"
+#include "tls/s2n_tls_parameters.h"
 
 static bool s2n_session_ticket_should_send(struct s2n_connection *conn);
 static int s2n_session_ticket_recv(struct s2n_connection *conn, struct s2n_stuffer *extension);
@@ -34,7 +34,8 @@ const s2n_extension_type s2n_server_session_ticket_extension = {
 
 static bool s2n_session_ticket_should_send(struct s2n_connection *conn)
 {
-    return s2n_server_sending_nst(conn) && s2n_connection_get_protocol_version(conn) < S2N_TLS13;
+    return s2n_server_sending_nst(conn) && s2n_connection_get_protocol_version(conn) < S2N_TLS13
+            && !conn->config->ticket_forward_secrecy;
 }
 
 static int s2n_session_ticket_recv(struct s2n_connection *conn, struct s2n_stuffer *extension)
@@ -50,19 +51,4 @@ static int s2n_session_ticket_recv(struct s2n_connection *conn, struct s2n_stuff
 int s2n_recv_server_session_ticket_ext(struct s2n_connection *conn, struct s2n_stuffer *extension)
 {
     return s2n_extension_recv(&s2n_server_session_ticket_extension, conn, extension);
-}
-
-int s2n_send_server_session_ticket_ext(struct s2n_connection *conn, struct s2n_stuffer *out)
-{
-    return s2n_extension_send(&s2n_server_session_ticket_extension, conn, out);
-}
-
-int s2n_server_session_ticket_ext_size(struct s2n_connection *conn)
-{
-    if (s2n_session_ticket_should_send(conn)) {
-        /* 2 for extension type. 2 for extension length of 0 */
-        return 4;
-    }
-
-    return 0;
 }

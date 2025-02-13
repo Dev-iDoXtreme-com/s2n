@@ -15,14 +15,13 @@
 
 #pragma once
 
+#include <s2n.h>
+
 #if ((__GNUC__ >= 4) || defined(__clang__)) && defined(S2N_EXPORTS)
-#    define S2N_PRIVATE_API __attribute__((visibility("default")))
+    #define S2N_PRIVATE_API __attribute__((visibility("default")))
 #else
-#    define S2N_PRIVATE_API
+    #define S2N_PRIVATE_API
 #endif /* __GNUC__ >= 4 || defined(__clang__) */
-
-
-#include <stdint.h>
 
 /*
  * Internal APIs.
@@ -30,9 +29,6 @@
  * These APIs change the behavior of S2N in potentially dangerous ways and should only be
  * used for testing purposes. All Internal APIs are subject to change without notice.
  */
-
-struct s2n_config;
-struct s2n_connection;
 
 /*
  * Gets the config set on the connection.
@@ -44,14 +40,22 @@ struct s2n_connection;
  * Caution: A config can be associated with multiple connections and should not be
  * modified after it has been built. Doing so is undefined behavior.
  */
-S2N_PRIVATE_API
-extern int s2n_connection_get_config(struct s2n_connection *conn, struct s2n_config **config);
+S2N_PRIVATE_API int s2n_connection_get_config(struct s2n_connection *conn, struct s2n_config **config);
 
 /*
- * Enable polling the async client_hello callback to make progress.
+ * Sets a certificate chain on the config.
  *
- * `s2n_negotiate` must be called multiple times to poll the callback function
- * and make progress.
+ * It does NOT set a private key, so the connection will need to be configured to
+ * [offload private key operations](https://github.com/aws/s2n-tls/blob/main/docs/usage-guide/topics/ch12-private-key-ops.md).
  */
-S2N_PRIVATE_API
-extern int s2n_config_client_hello_cb_enable_poll(struct s2n_config *config);
+S2N_PRIVATE_API int s2n_config_add_cert_chain(struct s2n_config *config,
+        uint8_t *cert_chain_pem, uint32_t cert_chain_pem_size);
+
+/*
+ * Attempts to flush any data buffered for sending.
+ *
+ * This method is not sufficient to complete a previous partial send. It can only
+ * attempt to flush data that has been encrypted and buffered, not data that
+ * is still waiting for encryption.
+ */
+S2N_PRIVATE_API int s2n_flush(struct s2n_connection *conn, s2n_blocked_status *blocked);

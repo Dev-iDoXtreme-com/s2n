@@ -1,4 +1,5 @@
-import time
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 import os
 import select
 import selectors
@@ -11,6 +12,7 @@ from time import monotonic as _time
 
 _PopenSelector = selectors.PollSelector
 _PIPE_BUF = getattr(select, 'PIPE_BUF', 512)
+_DEBUG_LEN = 80
 
 
 class _processCommunicator(object):
@@ -34,9 +36,10 @@ class _processCommunicator(object):
     time to time.
     """
 
-    def __init__(self, proc):
+    def __init__(self, proc, name):
         self.proc = proc
         self.wait_for_marker = None
+        self.name = name
 
         # If the process times out, communicate() is called once more to pick
         # up any data remaining in stdout/stderr. This flags lets us know if
@@ -154,13 +157,16 @@ class _processCommunicator(object):
                 ready = selector.select(timeout)
                 self._check_timeout(endtime, orig_timeout, stdout, stderr)
 
+                # (Key, events) tuple represents a single I/O operation
                 for key, events in ready:
                     # STDIN is only registered to receive events after the send_marker is found.
                     if key.fileobj is self.proc.stdin:
+                        print(f'{self.name}: stdin available')
                         chunk = input_view[input_data_offset:
                                            input_data_offset + _PIPE_BUF]
                         try:
                             input_data_offset += os.write(key.fd, chunk)
+                            print(f'{self.name}: sent')
                         except BrokenPipeError:
                             selector.unregister(key.fileobj)
                         else:
@@ -170,10 +176,27 @@ class _processCommunicator(object):
                                 input_data_offset = 0
                                 if send_marker_list:
                                     send_marker = send_marker_list.pop(0)
+                                    print(f'{self.name}: next send_marker is {send_marker}')
                     elif key.fileobj in (self.proc.stdout, self.proc.stderr):
+                        print(f'{self.name}: stdout available')
+                        # 32 KB (32 × 1024 = 32,768 bytes), read 32KB from the file descriptor
                         data = os.read(key.fd, 32768)
                         if not data:
                             selector.unregister(key.fileobj)
+                        data_str = str(data)
+
+                        # Prepends n - 1 bytes of previously-seen stdout to the chunk we'll be searching
+                        # through, where n is the size of the send_marker we're currently looking for.
+                        # This ensures a marker doesn't get split between chunks and we miss it.
+                        if self._fileobj2output[key.fileobj] and send_marker:
+                            stored_stdout_list = self._fileobj2output[key.fileobj]
+                            send_marker_len = len(send_marker) - 1
+                            if len(stored_stdout_list) > 0:
+                                data_str = str(stored_stdout_list[-1][-send_marker_len:] + data)
+
+                        data_debug = data_str[:_DEBUG_LEN]
+                        if len(data_str) > _DEBUG_LEN:
+                            data_debug += f' ...({len(data_str) - _DEBUG_LEN} more bytes)'
 
                         # fileobj2output[key.fileobj] is a list of data chunks
                         # that get joined later
@@ -182,7 +205,11 @@ class _processCommunicator(object):
                         # If we are looking for, and find, the ready-to-send marker, then
                         # register STDIN to receive events. If there is no data to send,
                         # just mark input_send as true so we can close out STDIN.
-                        if send_marker is not None and send_marker in str(data):
+                        if send_marker:
+                            print(f'{self.name}: looking for send_marker {send_marker} in {data_debug}')
+                        if send_marker is not None and send_marker in data_str:
+                            print(f'{self.name}: found {send_marker}')
+                            send_marker = None
                             if self.proc.stdin and input_data:
                                 selector.register(
                                     self.proc.stdin, selectors.EVENT_WRITE)
@@ -192,14 +219,21 @@ class _processCommunicator(object):
                                 # Data destined for stdin is stored in a memoryview
                                 input_view = memoryview(message)
                                 input_data_len = len(message)
+                                input_data_sent = False
+                                print(f'{self.name}: will send {message}')
                             else:
                                 input_data_sent = True
+                                print(f'{self.name}: will send nothing')
 
-                        if self.wait_for_marker is not None and self.wait_for_marker in str(data):
+                        if self.wait_for_marker:
+                            print(f'{self.name}: looking for wait_for_marker {self.wait_for_marker} in {data_debug}')
+                        if self.wait_for_marker is not None and self.wait_for_marker in data_str:
                             selector.unregister(self.proc.stdout)
                             selector.unregister(self.proc.stderr)
                             return None, None
 
+                        if kill_marker:
+                            print(f'{self.name}: looking for kill_marker {kill_marker} in {data}')
                         if kill_marker is not None and kill_marker in data:
                             selector.unregister(self.proc.stdout)
                             selector.unregister(self.proc.stderr)
@@ -207,8 +241,12 @@ class _processCommunicator(object):
 
                 # If we have finished sending all our input, and have received the
                 # ready-to-send marker, we can close out stdin.
-                if self.proc.stdin and input_data_sent:
-                    if close_marker is None or (close_marker and close_marker in str(data)):
+                if self.proc.stdin and input_data_sent and not input_data:
+                    print(f'{self.name}: finished sending')
+                    if close_marker:
+                        print(f'{self.name}: looking for close_marker {close_marker} in {data_debug}')
+                    if close_marker is None or (close_marker and close_marker in data_str):
+                        print(f'{self.name}: closing stdin')
                         input_data_sent = None
                         self.proc.stdin.close()
 
@@ -311,7 +349,7 @@ class ManagedProcess(threading.Thread):
                     None, None, None, ex, self.expect_stderr)
                 raise ex
 
-            communicator = _processCommunicator(proc)
+            communicator = _processCommunicator(proc, self.cmd_line[0])
 
             if self.ready_to_test is not None:
                 # Some processes won't be ready until they have emitted some string in stdout.
@@ -353,12 +391,22 @@ class ManagedProcess(threading.Thread):
             finally:
                 # This data is dumped to stdout so we capture this
                 # information no matter where a test fails.
-                print("Command line: {}".format(" ".join(self.cmd_line)))
-                print("Exit code: {}".format(proc.returncode))
-                print("Stdout: {}".format(
-                    proc_results[0].decode("utf-8", "backslashreplace")))
-                print("Stderr: {}".format(
-                    proc_results[1].decode("utf-8", "backslashreplace")))
+                print("###############################################################")
+                print(f"#######################   {self.cmd_line[0]}   #######################")
+                print("###############################################################")
+
+                print(f"Command line:\n\t{' '.join(self.cmd_line)}")
+                print(f"Exit code:\n\t {proc.returncode}")
+
+                print("##########################################################")
+                print("########################### Stdout #######################")
+                print("##########################################################")
+                print(proc_results[0].decode("utf-8", "backslashreplace"))
+
+                print("#########################################################")
+                print("########################### Stderr #######################")
+                print("#########################################################")
+                print(proc_results[1].decode("utf-8", "backslashreplace"))
 
     def kill(self):
         self.proc.kill()

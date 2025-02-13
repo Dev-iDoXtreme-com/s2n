@@ -14,10 +14,8 @@
  */
 
 #include "api/s2n.h"
-
 #include "s2n_test.h"
 #include "testlib/s2n_testlib.h"
-
 #include "utils/s2n_result.h"
 
 /* Get access to s2n_handshake_read_io */
@@ -28,12 +26,11 @@ int main(int argc, char **argv)
     BEGIN_TEST();
 
     uint8_t bad_record[] = {
-            0x17, /* ContentType opaque_type = application_data */
-            0x03, 0x03, /* ProtocolVersion legacy_record_version = 0x0303 */
-            0x00, 0x10, /* uint16 length */
-            /* opaque encrypted_record[TLSCiphertext.length] */
-            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-            0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+        0x17,       /* ContentType opaque_type = application_data */
+        0x03, 0x03, /* ProtocolVersion legacy_record_version = 0x0303 */
+        0x00, 0x10, /* uint16 length */
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, /* opaque encrypted_record[TLSCiphertext.length] */
     };
 
     struct s2n_cipher_suite *test_cipher_suite = &s2n_tls13_aes_256_gcm_sha384;
@@ -43,7 +40,7 @@ int main(int argc, char **argv)
             test_cipher_suite->record_alg->cipher->key_material_size));
 
     /**
-     *= https://tools.ietf.org/rfc/rfc8446#section-4.2.10
+     *= https://www.rfc-editor.org/rfc/rfc8446#section-4.2.10
      *= type=test
      *# If the client attempts a 0-RTT handshake but the server
      *# rejects it, the server will generally not have the 0-RTT record
@@ -65,10 +62,10 @@ int main(int argc, char **argv)
             EXPECT_NOT_NULL(server_conn);
             EXPECT_SUCCESS(s2n_connection_set_blinding(server_conn, S2N_SELF_SERVICE_BLINDING));
 
-            server_conn->secure.cipher_suite = test_cipher_suite;
-            POSIX_GUARD(server_conn->secure.cipher_suite->record_alg->cipher->init(&server_conn->secure.client_key));
-            POSIX_GUARD(server_conn->secure.cipher_suite->record_alg->cipher->set_decryption_key(&server_conn->secure.client_key, &test_key));
-            server_conn->client = &server_conn->secure;
+            server_conn->secure->cipher_suite = test_cipher_suite;
+            POSIX_GUARD_RESULT(server_conn->secure->cipher_suite->record_alg->cipher->init(&server_conn->secure->client_key));
+            POSIX_GUARD_RESULT(server_conn->secure->cipher_suite->record_alg->cipher->set_decryption_key(&server_conn->secure->client_key, &test_key));
+            server_conn->client = server_conn->secure;
 
             DEFER_CLEANUP(struct s2n_stuffer io_stuffer = { 0 }, s2n_stuffer_free);
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&io_stuffer, S2N_DEFAULT_RECORD_LENGTH));
@@ -81,26 +78,24 @@ int main(int argc, char **argv)
                 EXPECT_SUCCESS(s2n_stuffer_reread(&io_stuffer));
                 server_conn->early_data_state = S2N_EARLY_DATA_NOT_REQUESTED;
                 EXPECT_FAILURE_WITH_ERRNO(s2n_handshake_read_io(server_conn), S2N_ERR_DECRYPT);
-
-            }
+            };
 
             /* Fail for bad record if early data was accepted */
             {
                 EXPECT_SUCCESS(s2n_stuffer_reread(&io_stuffer));
                 server_conn->early_data_state = S2N_EARLY_DATA_ACCEPTED;
                 EXPECT_FAILURE_WITH_ERRNO(s2n_handshake_read_io(server_conn), S2N_ERR_DECRYPT);
-
-            }
+            };
 
             /* Succeed for bad record if early data was rejected */
             {
                 EXPECT_SUCCESS(s2n_stuffer_reread(&io_stuffer));
                 server_conn->early_data_state = S2N_EARLY_DATA_REJECTED;
                 EXPECT_SUCCESS(s2n_handshake_read_io(server_conn));
-            }
+            };
 
             EXPECT_SUCCESS(s2n_connection_free(server_conn));
-        }
+        };
 
         /* Client */
         {
@@ -111,10 +106,10 @@ int main(int argc, char **argv)
                 EXPECT_NOT_NULL(client_conn);
                 EXPECT_SUCCESS(s2n_connection_set_blinding(client_conn, S2N_SELF_SERVICE_BLINDING));
 
-                client_conn->secure.cipher_suite = test_cipher_suite;
-                POSIX_GUARD(client_conn->secure.cipher_suite->record_alg->cipher->init(&client_conn->secure.server_key));
-                POSIX_GUARD(client_conn->secure.cipher_suite->record_alg->cipher->set_decryption_key(&client_conn->secure.server_key, &test_key));
-                client_conn->server = &client_conn->secure;
+                client_conn->secure->cipher_suite = test_cipher_suite;
+                POSIX_GUARD_RESULT(client_conn->secure->cipher_suite->record_alg->cipher->init(&client_conn->secure->server_key));
+                POSIX_GUARD_RESULT(client_conn->secure->cipher_suite->record_alg->cipher->set_decryption_key(&client_conn->secure->server_key, &test_key));
+                client_conn->server = client_conn->secure;
 
                 DEFER_CLEANUP(struct s2n_stuffer io_stuffer = { 0 }, s2n_stuffer_free);
                 EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&io_stuffer, S2N_DEFAULT_RECORD_LENGTH));
@@ -126,9 +121,9 @@ int main(int argc, char **argv)
                 EXPECT_FAILURE_WITH_ERRNO(s2n_handshake_read_io(client_conn), S2N_ERR_DECRYPT);
 
                 EXPECT_SUCCESS(s2n_connection_free(client_conn));
-            }
-        }
-    }
+            };
+        };
+    };
 
     END_TEST();
 }

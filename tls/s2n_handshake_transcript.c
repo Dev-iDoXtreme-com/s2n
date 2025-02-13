@@ -13,16 +13,31 @@
  * permissions and limitations under the License.
  */
 
+#include "stuffer/s2n_stuffer.h"
 #include "tls/s2n_connection.h"
 #include "tls/s2n_tls.h"
 #include "tls/s2n_tls13_handshake.h"
-
-#include "stuffer/s2n_stuffer.h"
-
 #include "utils/s2n_blob.h"
 
 /* Length of the synthetic message header */
-#define MESSAGE_HASH_HEADER_LENGTH  4
+#define MESSAGE_HASH_HEADER_LENGTH 4
+
+S2N_RESULT s2n_handshake_transcript_update(struct s2n_connection *conn)
+{
+    RESULT_ENSURE_REF(conn);
+
+    struct s2n_stuffer message = conn->handshake.io;
+    RESULT_GUARD_POSIX(s2n_stuffer_reread(&message));
+
+    struct s2n_blob data = { 0 };
+    uint32_t len = s2n_stuffer_data_available(&message);
+    uint8_t *bytes = s2n_stuffer_raw_read(&message, len);
+    RESULT_ENSURE_REF(bytes);
+    RESULT_GUARD_POSIX(s2n_blob_init(&data, bytes, len));
+
+    RESULT_GUARD_POSIX(s2n_conn_update_handshake_hashes(conn, &data));
+    return S2N_RESULT_OK;
+}
 
 int s2n_conn_update_handshake_hashes(struct s2n_connection *conn, struct s2n_blob *data)
 {
@@ -31,13 +46,14 @@ int s2n_conn_update_handshake_hashes(struct s2n_connection *conn, struct s2n_blo
     struct s2n_handshake_hashes *hashes = conn->handshake.hashes;
     POSIX_ENSURE_REF(hashes);
 
+    /* MD5 and SHA1 are not permitted in FIPS mode, but an exception is made in
+     * order to continue to support TLS1.0 and TLS1.1. NIST SP 800-52r1 approves
+     * their continued use for the signature check in the CertificateVerify message
+     * and the PRF when negotiating TLS1.0 or TLS1.1 (see footnotes 15 and 20,
+     * and section 3.3.2)
+     */
+
     if (s2n_handshake_is_hash_required(&conn->handshake, S2N_HASH_MD5)) {
-        /* The handshake MD5 hash state will fail the s2n_hash_is_available() check
-         * since MD5 is not permitted in FIPS mode. This check will not be used as
-         * the handshake MD5 hash state is specifically used by the TLS 1.0 and TLS 1.1
-         * PRF, which is required to comply with the TLS 1.0 and 1.1 RFCs and is approved
-         * as per NIST Special Publication 800-52 Revision 1.
-         */
         POSIX_GUARD(s2n_hash_update(&hashes->md5, data->data, data->size));
     }
 
@@ -45,15 +61,11 @@ int s2n_conn_update_handshake_hashes(struct s2n_connection *conn, struct s2n_blo
         POSIX_GUARD(s2n_hash_update(&hashes->sha1, data->data, data->size));
     }
 
-    const uint8_t md5_sha1_required = (s2n_handshake_is_hash_required(&conn->handshake, S2N_HASH_MD5) &&
-                                       s2n_handshake_is_hash_required(&conn->handshake, S2N_HASH_SHA1));
+    const uint8_t md5_sha1_required =
+            (s2n_handshake_is_hash_required(&conn->handshake, S2N_HASH_MD5)
+                    && s2n_handshake_is_hash_required(&conn->handshake, S2N_HASH_SHA1));
 
     if (md5_sha1_required) {
-        /* The MD5_SHA1 hash can still be used for TLS 1.0 and 1.1 in FIPS mode for 
-         * the handshake hashes. This will only be used for the signature check in the
-         * CertificateVerify message and the PRF. NIST SP 800-52r1 approves use
-         * of MD5_SHA1 for these use cases (see footnotes 15 and 20, and section
-         * 3.3.2) */
         POSIX_GUARD(s2n_hash_update(&hashes->md5_sha1, data->data, data->size));
     }
 
@@ -91,7 +103,7 @@ int s2n_server_hello_retry_recreate_transcript(struct s2n_connection *conn)
     uint8_t hash_digest_length = keys.size;
 
     /* Create the MessageHash (our synthetic message) */
-    uint8_t msghdr[MESSAGE_HASH_HEADER_LENGTH] = {0};
+    uint8_t msghdr[MESSAGE_HASH_HEADER_LENGTH] = { 0 };
     msghdr[0] = TLS_MESSAGE_HASH;
     msghdr[MESSAGE_HASH_HEADER_LENGTH - 1] = hash_digest_length;
 
@@ -105,7 +117,7 @@ int s2n_server_hello_retry_recreate_transcript(struct s2n_connection *conn)
     POSIX_GUARD_RESULT(s2n_handshake_reset_hash_state(conn, keys.hash_algorithm));
 
     /* Step 2: Update the transcript with the synthetic message */
-    struct s2n_blob msg_blob = {0};
+    struct s2n_blob msg_blob = { 0 };
     POSIX_GUARD(s2n_blob_init(&msg_blob, msghdr, MESSAGE_HASH_HEADER_LENGTH));
     POSIX_GUARD(s2n_conn_update_handshake_hashes(conn, &msg_blob));
 

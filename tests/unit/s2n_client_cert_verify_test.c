@@ -14,16 +14,15 @@
  */
 
 #include <stdint.h>
-#include "api/s2n.h"
 
+#include "api/s2n.h"
 #include "s2n_test.h"
 #include "testlib/s2n_testlib.h"
-
-#include "tls/s2n_tls.h"
+#include "tls/s2n_async_pkey.h"
 #include "tls/s2n_connection.h"
+#include "tls/s2n_tls.h"
 #include "utils/s2n_result.h"
 #include "utils/s2n_safety.h"
-#include "tls/s2n_async_pkey.h"
 
 static bool async_callback_invoked = false;
 static bool async_sign_operation_called_s2n_client = false;
@@ -34,7 +33,7 @@ const uint8_t test_signature_data[] = "I signed this";
 const uint32_t test_signature_size = sizeof(test_signature_data);
 const uint32_t test_max_signature_size = 2 * sizeof(test_signature_data);
 
-typedef int (async_handler)(struct s2n_connection *conn, s2n_blocked_status *block);
+typedef int(async_handler)(struct s2n_connection *conn, s2n_blocked_status *block);
 
 static S2N_RESULT test_size(const struct s2n_pkey *pkey, uint32_t *size_out)
 {
@@ -145,7 +144,7 @@ static int s2n_test_apply_with_invalid_signature_handler(struct s2n_connection *
 }
 
 static int s2n_try_handshake_with_async_pkey_op(struct s2n_connection *server_conn, struct s2n_connection *client_conn,
-                                                async_handler handler)
+        async_handler handler)
 {
     s2n_blocked_status server_blocked = { 0 };
     s2n_blocked_status client_blocked = { 0 };
@@ -170,9 +169,9 @@ int main(int argc, char **argv)
         EXPECT_NOT_NULL(conn);
 
         /* Set any signature scheme. Our test pkey methods ignore it. */
-        conn->handshake_params.client_cert_sig_scheme = s2n_rsa_pkcs1_md5_sha1;
+        conn->handshake_params.client_cert_sig_scheme = &s2n_rsa_pkcs1_md5_sha1;
 
-        struct s2n_cert_chain_and_key *chain_and_key;
+        struct s2n_cert_chain_and_key *chain_and_key = NULL;
         EXPECT_SUCCESS(s2n_test_cert_chain_and_key_new(&chain_and_key,
                 S2N_DEFAULT_ECDSA_TEST_CERT_CHAIN, S2N_DEFAULT_ECDSA_TEST_PRIVATE_KEY));
         chain_and_key->private_key->size = test_size;
@@ -181,11 +180,11 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_client_cert_verify_send(conn));
 
-        uint16_t signature_scheme_iana;
+        uint16_t signature_scheme_iana = 0;
         EXPECT_SUCCESS(s2n_stuffer_read_uint16(&conn->handshake.io, &signature_scheme_iana));
         EXPECT_EQUAL(signature_scheme_iana, s2n_rsa_pkcs1_md5_sha1.iana_value);
 
-        uint16_t signature_size;
+        uint16_t signature_size = 0;
         EXPECT_SUCCESS(s2n_stuffer_read_uint16(&conn->handshake.io, &signature_size));
         EXPECT_NOT_EQUAL(signature_size, test_max_signature_size);
         EXPECT_EQUAL(signature_size, test_signature_size);
@@ -197,15 +196,15 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
         EXPECT_SUCCESS(s2n_cert_chain_and_key_free(chain_and_key));
-    }
+    };
 
     /*  Test: async private key operations. */
     {
-        struct s2n_cert_chain_and_key *chain_and_key;
+        struct s2n_cert_chain_and_key *chain_and_key = NULL;
         EXPECT_SUCCESS(s2n_test_cert_chain_and_key_new(&chain_and_key,
                 S2N_DEFAULT_TEST_CERT_CHAIN, S2N_DEFAULT_TEST_PRIVATE_KEY));
 
-        struct s2n_config *client_config;
+        struct s2n_config *client_config = NULL;
         EXPECT_NOT_NULL(client_config = s2n_config_new());
         EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key_to_store(client_config, chain_and_key));
         EXPECT_SUCCESS(s2n_config_set_async_pkey_callback(client_config, s2n_async_pkey_store_op));
@@ -221,7 +220,7 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_connection_set_config(client_conn, client_config));
         EXPECT_SUCCESS(s2n_connection_set_client_auth_type(client_conn, S2N_CERT_AUTH_REQUIRED));
 
-        struct s2n_config *server_config;
+        struct s2n_config *server_config = NULL;
         EXPECT_NOT_NULL(server_config = s2n_config_new());
         EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key_to_store(server_config, chain_and_key));
         EXPECT_SUCCESS(s2n_config_set_unsafe_for_testing(server_config));
@@ -238,7 +237,7 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_connection_set_io_pair(server_conn, &io_pair));
 
         EXPECT_SUCCESS(s2n_try_handshake_with_async_pkey_op(server_conn, client_conn,
-                                                            s2n_test_negotiate_with_async_pkey_op_handler));
+                s2n_test_negotiate_with_async_pkey_op_handler));
 
         /* Make sure async callback was used during the handshake. */
         EXPECT_TRUE(async_callback_invoked);
@@ -256,15 +255,15 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_config_free(client_config));
         EXPECT_SUCCESS(s2n_config_free(server_config));
         EXPECT_SUCCESS(s2n_cert_chain_and_key_free(chain_and_key));
-    }
+    };
 
     /* Test: Apply with invalid signature */
     {
-        struct s2n_cert_chain_and_key *chain_and_key;
+        struct s2n_cert_chain_and_key *chain_and_key = NULL;
         EXPECT_SUCCESS(s2n_test_cert_chain_and_key_new(&chain_and_key,
                 S2N_DEFAULT_TEST_CERT_CHAIN, S2N_DEFAULT_TEST_PRIVATE_KEY));
 
-        struct s2n_config *client_config;
+        struct s2n_config *client_config = NULL;
         EXPECT_NOT_NULL(client_config = s2n_config_new());
         EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key_to_store(client_config, chain_and_key));
         EXPECT_SUCCESS(s2n_config_set_async_pkey_callback(client_config, s2n_async_pkey_store_op));
@@ -279,7 +278,7 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_connection_set_config(client_conn, client_config));
         EXPECT_SUCCESS(s2n_connection_set_client_auth_type(client_conn, S2N_CERT_AUTH_REQUIRED));
 
-        struct s2n_config *server_config;
+        struct s2n_config *server_config = NULL;
         EXPECT_NOT_NULL(server_config = s2n_config_new());
         EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key_to_store(server_config, chain_and_key));
         EXPECT_SUCCESS(s2n_config_set_unsafe_for_testing(server_config));
@@ -296,7 +295,7 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_connection_set_io_pair(server_conn, &io_pair));
 
         EXPECT_SUCCESS(s2n_try_handshake_with_async_pkey_op(server_conn, client_conn,
-                                                            s2n_test_apply_with_invalid_signature_handler));
+                s2n_test_apply_with_invalid_signature_handler));
 
         /* Make sure async callback was used during the handshake. */
         EXPECT_TRUE(async_callback_invoked);
@@ -317,7 +316,7 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_config_free(client_config));
         EXPECT_SUCCESS(s2n_config_free(server_config));
         EXPECT_SUCCESS(s2n_cert_chain_and_key_free(chain_and_key));
-    }
+    };
 
     END_TEST();
 }

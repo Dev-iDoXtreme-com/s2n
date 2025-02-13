@@ -13,22 +13,18 @@
  * permissions and limitations under the License.
  */
 
-#include "s2n_test.h"
-#include "testlib/s2n_testlib.h"
-
 #include "crypto/s2n_rsa_signing.h"
-
-#include "tls/s2n_tls.h"
-#include "tls/s2n_tls13.h"
-
+#include "error/s2n_errno.h"
+#include "s2n_test.h"
+#include "stuffer/s2n_stuffer.h"
+#include "testlib/s2n_testlib.h"
 #include "tls/extensions/s2n_extension_type.h"
 #include "tls/extensions/s2n_server_alpn.h"
 #include "tls/extensions/s2n_server_max_fragment_length.h"
 #include "tls/extensions/s2n_server_server_name.h"
 #include "tls/extensions/s2n_server_supported_versions.h"
-
-#include "error/s2n_errno.h"
-#include "stuffer/s2n_stuffer.h"
+#include "tls/s2n_tls.h"
+#include "tls/s2n_tls13.h"
 #include "utils/s2n_safety.h"
 
 int main(int argc, char **argv)
@@ -44,7 +40,7 @@ int main(int argc, char **argv)
 
         /* Should fail for pre-TLS1.3 */
         {
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
             EXPECT_SUCCESS(s2n_connection_allow_all_response_extensions(conn));
 
@@ -57,11 +53,11 @@ int main(int argc, char **argv)
             EXPECT_SUCCESS(s2n_encrypted_extensions_send(conn));
 
             EXPECT_SUCCESS(s2n_connection_free(conn));
-        }
+        };
 
         /* Should send no extensions by default */
         {
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
             EXPECT_SUCCESS(s2n_connection_allow_all_response_extensions(conn));
             conn->actual_protocol_version = S2N_TLS13;
@@ -70,17 +66,17 @@ int main(int argc, char **argv)
 
             EXPECT_SUCCESS(s2n_encrypted_extensions_send(conn));
 
-            uint16_t extension_list_size;
+            uint16_t extension_list_size = 0;
             EXPECT_SUCCESS(s2n_stuffer_read_uint16(stuffer, &extension_list_size));
             EXPECT_EQUAL(extension_list_size, 0);
             EXPECT_EQUAL(s2n_stuffer_data_available(stuffer), 0);
 
             EXPECT_SUCCESS(s2n_connection_free(conn));
-        }
+        };
 
         /* Should send a requested extension */
         {
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
             EXPECT_SUCCESS(s2n_connection_allow_all_response_extensions(conn));
             conn->actual_protocol_version = S2N_TLS13;
@@ -90,18 +86,18 @@ int main(int argc, char **argv)
             conn->server_name_used = 1;
             EXPECT_SUCCESS(s2n_encrypted_extensions_send(conn));
 
-            uint16_t extension_list_size;
+            uint16_t extension_list_size = 0;
             EXPECT_SUCCESS(s2n_stuffer_read_uint16(stuffer, &extension_list_size));
             EXPECT_NOT_EQUAL(extension_list_size, 0);
             EXPECT_EQUAL(s2n_stuffer_data_available(stuffer), extension_list_size);
 
-            uint16_t extension_type;
+            uint16_t extension_type = 0;
             EXPECT_SUCCESS(s2n_stuffer_read_uint16(stuffer, &extension_type));
             EXPECT_EQUAL(extension_type, s2n_server_server_name_extension.iana_value);
 
             EXPECT_SUCCESS(s2n_connection_free(conn));
-        }
-    }
+        };
+    };
 
     /* Test s2n_encrypted_extensions_recv */
     {
@@ -110,7 +106,7 @@ int main(int argc, char **argv)
 
         /* Should fail for pre-TLS1.3 */
         {
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
             EXPECT_SUCCESS(s2n_connection_allow_all_response_extensions(conn));
 
@@ -123,11 +119,11 @@ int main(int argc, char **argv)
             EXPECT_SUCCESS(s2n_encrypted_extensions_recv(conn));
 
             EXPECT_SUCCESS(s2n_connection_free(conn));
-        }
+        };
 
         /* Should parse an empty list */
         {
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
             EXPECT_SUCCESS(s2n_connection_allow_all_response_extensions(conn));
             conn->actual_protocol_version = S2N_TLS13;
@@ -149,11 +145,11 @@ int main(int argc, char **argv)
             EXPECT_EQUAL(s2n_stuffer_data_available(stuffer), 0);
 
             EXPECT_SUCCESS(s2n_connection_free(conn));
-        }
+        };
 
         /* Should parse a requested extension */
         {
-            struct s2n_connection *conn;
+            struct s2n_connection *conn = NULL;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
             EXPECT_SUCCESS(s2n_connection_allow_all_response_extensions(conn));
             conn->actual_protocol_version = S2N_TLS13;
@@ -171,18 +167,18 @@ int main(int argc, char **argv)
             EXPECT_EQUAL(conn->server_name_used, 1);
 
             EXPECT_SUCCESS(s2n_connection_free(conn));
-        }
-    }
+        };
+    };
 
     /* Functional: Unencrypted EncryptedExtensions rejected */
     if (s2n_is_tls13_fully_supported()) {
         s2n_blocked_status blocked = S2N_NOT_BLOCKED;
 
-        struct s2n_cert_chain_and_key *chain_and_key;
+        struct s2n_cert_chain_and_key *chain_and_key = NULL;
         EXPECT_SUCCESS(s2n_test_cert_chain_and_key_new(&chain_and_key,
                 S2N_DEFAULT_ECDSA_TEST_CERT_CHAIN, S2N_DEFAULT_ECDSA_TEST_PRIVATE_KEY));
 
-        struct s2n_config *config;
+        struct s2n_config *config = NULL;
         EXPECT_NOT_NULL(config = s2n_config_new());
         EXPECT_SUCCESS(s2n_config_set_cipher_preferences(config, "default_tls13"));
         EXPECT_SUCCESS(s2n_config_set_unsafe_for_testing(config));
@@ -211,10 +207,10 @@ int main(int argc, char **argv)
         EXPECT_EQUAL(s2n_conn_get_current_message_type(server_conn), ENCRYPTED_EXTENSIONS);
 
         /* Verify that the EncryptedExtension message would normally be encrypted */
-        EXPECT_EQUAL(server_conn->server, &server_conn->secure);
+        EXPECT_EQUAL(server_conn->server, server_conn->secure);
 
         /* Force the server to disable encryption for the EncryptedExtensions message */
-        server_conn->server = &server_conn->initial;
+        server_conn->server = server_conn->initial;
 
         /* Enable an extension to ensure the message is long enough to resemble an encrypted record.
          * If the message is too short, we fail without even attempting decryption and this error

@@ -14,7 +14,6 @@
  */
 
 #include "s2n_test.h"
-
 #include "tls/extensions/s2n_ems.h"
 #include "tls/extensions/s2n_extension_list.h"
 #include "tls/s2n_connection.h"
@@ -37,7 +36,7 @@ int main(int argc, char **argv)
         EXPECT_TRUE(s2n_server_ems_extension.should_send(conn));
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
-    }
+    };
 
     /* Test that the ems_negotiated flag is set when the EMS extension is received */
     {
@@ -65,7 +64,7 @@ int main(int argc, char **argv)
 
         EXPECT_SUCCESS(s2n_connection_free(server_conn));
         EXPECT_SUCCESS(s2n_connection_free(client_conn));
-    }
+    };
 
     /* s2n_server_ems_is_missing */
     {
@@ -73,7 +72,7 @@ int main(int argc, char **argv)
         EXPECT_NOT_NULL(conn);
 
         /**
-         *= https://tools.ietf.org/rfc/rfc7627#section-5.3
+         *= https://www.rfc-editor.org/rfc/rfc7627#section-5.3
          *= type=test
          *#    If the original session used the extension but the new ServerHello
          *#    does not contain the extension, the client MUST abort the
@@ -86,7 +85,7 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_server_ems_extension.if_missing(conn));
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
-    }
+    };
 
     /* s2n_client_ems_should_send */
     {
@@ -108,7 +107,7 @@ int main(int argc, char **argv)
         EXPECT_FALSE(s2n_client_ems_extension.should_send(conn));
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
-    }
+    };
 
     END_TEST();
 }

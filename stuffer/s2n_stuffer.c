@@ -13,17 +13,16 @@
  * permissions and limitations under the License.
  */
 
+#include "stuffer/s2n_stuffer.h"
+
 #include <sys/param.h>
 
 #include "error/s2n_errno.h"
-
-#include "stuffer/s2n_stuffer.h"
-
-#include "utils/s2n_safety.h"
 #include "utils/s2n_blob.h"
 #include "utils/s2n_mem.h"
+#include "utils/s2n_safety.h"
 
-S2N_RESULT s2n_stuffer_validate(const struct s2n_stuffer* stuffer)
+S2N_RESULT s2n_stuffer_validate(const struct s2n_stuffer *stuffer)
 {
     /**
      * Note that we do not assert any properties on the tainted field,
@@ -40,7 +39,7 @@ S2N_RESULT s2n_stuffer_validate(const struct s2n_stuffer* stuffer)
     return S2N_RESULT_OK;
 }
 
-S2N_RESULT s2n_stuffer_reservation_validate(const struct s2n_stuffer_reservation* reservation)
+S2N_RESULT s2n_stuffer_reservation_validate(const struct s2n_stuffer_reservation *reservation)
 {
     /**
      * Note that we need two dereferences here to decrease proof complexity
@@ -51,15 +50,12 @@ S2N_RESULT s2n_stuffer_reservation_validate(const struct s2n_stuffer_reservation
     const struct s2n_stuffer_reservation reserve_obj = *reservation;
     RESULT_GUARD(s2n_stuffer_validate(reserve_obj.stuffer));
     const struct s2n_stuffer stuffer_obj = *(reserve_obj.stuffer);
-    RESULT_ENSURE(stuffer_obj.blob.size >= reserve_obj.length, S2N_ERR_SAFETY);
 
-    if (reserve_obj.length > 0) {
-        RESULT_ENSURE(reserve_obj.write_cursor < stuffer_obj.write_cursor, S2N_ERR_SAFETY);
-        RESULT_ENSURE(
-            S2N_MEM_IS_WRITABLE(stuffer_obj.blob.data + reserve_obj.write_cursor, reserve_obj.length),
-            S2N_ERR_SAFETY
-        );
-    }
+    /* Verify that write_cursor + length can be represented as a uint32_t without overflow */
+    RESULT_ENSURE_LTE(reserve_obj.write_cursor, UINT32_MAX - reserve_obj.length);
+    /* The entire reservation must fit between the stuffer read and write cursors */
+    RESULT_ENSURE_LTE(reserve_obj.write_cursor + reserve_obj.length, stuffer_obj.write_cursor);
+    RESULT_ENSURE_GTE(reserve_obj.write_cursor, stuffer_obj.read_cursor);
 
     return S2N_RESULT_OK;
 }
@@ -79,10 +75,18 @@ int s2n_stuffer_init(struct s2n_stuffer *stuffer, struct s2n_blob *in)
     return S2N_SUCCESS;
 }
 
+int s2n_stuffer_init_written(struct s2n_stuffer *stuffer, struct s2n_blob *in)
+{
+    POSIX_ENSURE_REF(in);
+    POSIX_GUARD(s2n_stuffer_init(stuffer, in));
+    POSIX_GUARD(s2n_stuffer_skip_write(stuffer, in->size));
+    return S2N_SUCCESS;
+}
+
 int s2n_stuffer_alloc(struct s2n_stuffer *stuffer, const uint32_t size)
 {
     POSIX_ENSURE_REF(stuffer);
-    *stuffer = (struct s2n_stuffer) {0};
+    *stuffer = (struct s2n_stuffer){ 0 };
     POSIX_GUARD(s2n_alloc(&stuffer->blob, size));
     POSIX_GUARD(s2n_stuffer_init(stuffer, &stuffer->blob));
 
@@ -105,12 +109,20 @@ int s2n_stuffer_growable_alloc(struct s2n_stuffer *stuffer, const uint32_t size)
 int s2n_stuffer_free(struct s2n_stuffer *stuffer)
 {
     POSIX_PRECONDITION(s2n_stuffer_validate(stuffer));
-    if (stuffer != NULL) {
-        if (stuffer->alloced) {
-            POSIX_GUARD(s2n_free(&stuffer->blob));
-        }
-        *stuffer = (struct s2n_stuffer) {0};
+    if (stuffer->alloced) {
+        POSIX_GUARD(s2n_free(&stuffer->blob));
     }
+    *stuffer = (struct s2n_stuffer){ 0 };
+    return S2N_SUCCESS;
+}
+
+int s2n_stuffer_free_without_wipe(struct s2n_stuffer *stuffer)
+{
+    POSIX_PRECONDITION(s2n_stuffer_validate(stuffer));
+    if (stuffer->alloced) {
+        POSIX_GUARD(s2n_free_without_wipe(&stuffer->blob));
+    }
+    *stuffer = (struct s2n_stuffer){ 0 };
     return S2N_SUCCESS;
 }
 
@@ -131,9 +143,15 @@ int s2n_stuffer_resize(struct s2n_stuffer *stuffer, const uint32_t size)
 
     if (size < stuffer->blob.size) {
         POSIX_CHECKED_MEMSET(stuffer->blob.data + size, S2N_WIPE_PATTERN, (stuffer->blob.size - size));
-        if (stuffer->read_cursor > size) stuffer->read_cursor = size;
-        if (stuffer->write_cursor > size) stuffer->write_cursor = size;
-        if (stuffer->high_water_mark > size) stuffer->high_water_mark = size;
+        if (stuffer->read_cursor > size) {
+            stuffer->read_cursor = size;
+        }
+        if (stuffer->write_cursor > size) {
+            stuffer->write_cursor = size;
+        }
+        if (stuffer->high_water_mark > size) {
+            stuffer->high_water_mark = size;
+        }
         stuffer->blob.size = size;
         POSIX_POSTCONDITION(s2n_stuffer_validate(stuffer));
         return S2N_SUCCESS;
@@ -184,21 +202,19 @@ int s2n_stuffer_reread(struct s2n_stuffer *stuffer)
 int s2n_stuffer_wipe_n(struct s2n_stuffer *stuffer, const uint32_t size)
 {
     POSIX_PRECONDITION(s2n_stuffer_validate(stuffer));
-    if (size >= stuffer->write_cursor) {
-        return s2n_stuffer_wipe(stuffer);
-    }
+    uint32_t wipe_size = MIN(size, stuffer->write_cursor);
 
-    /* We know that size is now less than write_cursor */
-    stuffer->write_cursor -= size;
-    POSIX_CHECKED_MEMSET(stuffer->blob.data + stuffer->write_cursor, S2N_WIPE_PATTERN, size);
+    stuffer->write_cursor -= wipe_size;
     stuffer->read_cursor = MIN(stuffer->read_cursor, stuffer->write_cursor);
+    POSIX_CHECKED_MEMSET(stuffer->blob.data + stuffer->write_cursor, S2N_WIPE_PATTERN, wipe_size);
 
     POSIX_POSTCONDITION(s2n_stuffer_validate(stuffer));
     return S2N_SUCCESS;
 }
 
-bool s2n_stuffer_is_consumed(struct s2n_stuffer *stuffer) {
-      return stuffer && (stuffer->read_cursor == stuffer->write_cursor);
+bool s2n_stuffer_is_consumed(struct s2n_stuffer *stuffer)
+{
+    return stuffer && (stuffer->read_cursor == stuffer->write_cursor) && !stuffer->tainted;
 }
 
 int s2n_stuffer_wipe(struct s2n_stuffer *stuffer)
@@ -254,7 +270,7 @@ int s2n_stuffer_erase_and_read(struct s2n_stuffer *stuffer, struct s2n_blob *out
     return S2N_SUCCESS;
 }
 
-int s2n_stuffer_read_bytes(struct s2n_stuffer *stuffer, uint8_t * data, uint32_t size)
+int s2n_stuffer_read_bytes(struct s2n_stuffer *stuffer, uint8_t *data, uint32_t size)
 {
     POSIX_ENSURE_REF(data);
     POSIX_PRECONDITION(s2n_stuffer_validate(stuffer));
@@ -267,7 +283,7 @@ int s2n_stuffer_read_bytes(struct s2n_stuffer *stuffer, uint8_t * data, uint32_t
     return S2N_SUCCESS;
 }
 
-int s2n_stuffer_erase_and_read_bytes(struct s2n_stuffer *stuffer, uint8_t * data, uint32_t size)
+int s2n_stuffer_erase_and_read_bytes(struct s2n_stuffer *stuffer, uint8_t *data, uint32_t size)
 {
     POSIX_GUARD(s2n_stuffer_skip_read(stuffer, size));
     POSIX_ENSURE_REF(stuffer->blob.data);
@@ -305,8 +321,12 @@ int s2n_stuffer_write(struct s2n_stuffer *stuffer, const struct s2n_blob *in)
     return s2n_stuffer_write_bytes(stuffer, in->data, in->size);
 }
 
-int s2n_stuffer_write_bytes(struct s2n_stuffer *stuffer, const uint8_t * data, const uint32_t size)
+int s2n_stuffer_write_bytes(struct s2n_stuffer *stuffer, const uint8_t *data, const uint32_t size)
 {
+    if (size == 0) {
+        return S2N_SUCCESS;
+    }
+
     POSIX_ENSURE(S2N_MEM_IS_READABLE(data, size), S2N_ERR_SAFETY);
     POSIX_PRECONDITION(s2n_stuffer_validate(stuffer));
     POSIX_GUARD(s2n_stuffer_skip_write(stuffer, size));
@@ -325,7 +345,8 @@ int s2n_stuffer_write_bytes(struct s2n_stuffer *stuffer, const uint8_t * data, c
     return S2N_SUCCESS;
 }
 
-int s2n_stuffer_writev_bytes(struct s2n_stuffer *stuffer, const struct iovec* iov, size_t iov_count, uint32_t offs, uint32_t size)
+int s2n_stuffer_writev_bytes(struct s2n_stuffer *stuffer, const struct iovec *iov, size_t iov_count, uint32_t offs,
+        uint32_t size)
 {
     POSIX_PRECONDITION(s2n_stuffer_validate(stuffer));
     POSIX_ENSURE_REF(iov);
@@ -339,17 +360,17 @@ int s2n_stuffer_writev_bytes(struct s2n_stuffer *stuffer, const struct iovec* io
             continue;
         }
         size_t iov_len_op = iov[i].iov_len - to_skip;
-        POSIX_ENSURE(iov_len_op <= UINT32_MAX, S2N_FAILURE);
-        uint32_t iov_len = (uint32_t)iov_len_op;
+        POSIX_ENSURE_LTE(iov_len_op, UINT32_MAX);
+        uint32_t iov_len = (uint32_t) iov_len_op;
         uint32_t iov_size_to_take = MIN(size_left, iov_len);
         POSIX_ENSURE_REF(iov[i].iov_base);
-        POSIX_ENSURE(to_skip < iov[i].iov_len, S2N_FAILURE);
-        POSIX_CHECKED_MEMCPY(ptr, ((uint8_t*)(iov[i].iov_base)) + to_skip, iov_size_to_take);
+        POSIX_ENSURE_LT(to_skip, iov[i].iov_len);
+        POSIX_CHECKED_MEMCPY(ptr, ((uint8_t *) (iov[i].iov_base)) + to_skip, iov_size_to_take);
         size_left -= iov_size_to_take;
         if (size_left == 0) {
             break;
         }
-        ptr = (void*)((uint8_t*)ptr + iov_size_to_take);
+        ptr = (void *) ((uint8_t *) ptr + iov_size_to_take);
         to_skip = 0;
     }
 
@@ -405,14 +426,30 @@ int s2n_stuffer_extract_blob(struct s2n_stuffer *stuffer, struct s2n_blob *out)
 {
     POSIX_PRECONDITION(s2n_stuffer_validate(stuffer));
     POSIX_ENSURE_REF(out);
-    POSIX_GUARD(s2n_realloc(out , s2n_stuffer_data_available(stuffer)));
+    POSIX_GUARD(s2n_realloc(out, s2n_stuffer_data_available(stuffer)));
 
     if (s2n_stuffer_data_available(stuffer) > 0) {
-        POSIX_CHECKED_MEMCPY(out->data,
-                     stuffer->blob.data + stuffer->read_cursor,
-                     s2n_stuffer_data_available(stuffer));
+        POSIX_CHECKED_MEMCPY(out->data, stuffer->blob.data + stuffer->read_cursor, s2n_stuffer_data_available(stuffer));
     }
 
     POSIX_POSTCONDITION(s2n_blob_validate(out));
+    return S2N_SUCCESS;
+}
+
+int s2n_stuffer_shift(struct s2n_stuffer *stuffer)
+{
+    POSIX_ENSURE_REF(stuffer);
+    struct s2n_stuffer copy = *stuffer;
+    POSIX_GUARD(s2n_stuffer_rewrite(&copy));
+
+    uint8_t *data = stuffer->blob.data;
+    /* Adding 0 to a NULL value is undefined behavior */
+    if (stuffer->read_cursor != 0) {
+        data += stuffer->read_cursor;
+    }
+
+    uint32_t data_size = s2n_stuffer_data_available(stuffer);
+    POSIX_GUARD(s2n_stuffer_write_bytes(&copy, data, data_size));
+    *stuffer = copy;
     return S2N_SUCCESS;
 }

@@ -13,18 +13,18 @@
  * permissions and limitations under the License.
  */
 
+#include "tls/s2n_tls13_key_schedule.h"
+
 #include "s2n_test.h"
 #include "testlib/s2n_testlib.h"
-
-#include "tls/s2n_tls13_key_schedule.h"
 #include "tls/s2n_cipher_suites.h"
 
 /* For access to secret handlers.
  * We override them for mocking purposees. */
 #include "tls/s2n_tls13_secrets.c"
 
-#define NO_TRIGGER_MSG APPLICATION_DATA
-#define TRAFFIC_SECRET_COUNT 5
+#define NO_TRIGGER_MSG       APPLICATION_DATA
+#define TRAFFIC_SECRET_COUNT 6
 
 static uint8_t empty_secret[S2N_TLS13_SECRET_MAX_LEN] = { 0 };
 
@@ -40,10 +40,10 @@ struct s2n_test_secrets {
     struct s2n_blob blobs[TRAFFIC_SECRET_COUNT];
 };
 
-static int s2n_test_secret_cb(void* context, struct s2n_connection *conn,
+static int s2n_test_secret_cb(void *context, struct s2n_connection *conn,
         s2n_secret_type_t secret_type, uint8_t *secret_bytes, uint8_t secret_size)
 {
-    struct s2n_test_secrets *secrets = (struct s2n_test_secrets*) context;
+    struct s2n_test_secrets *secrets = (struct s2n_test_secrets *) context;
     POSIX_ENSURE_REF(secrets);
 
     POSIX_ENSURE_GTE(secret_type, 0);
@@ -59,8 +59,8 @@ static S2N_RESULT s2n_connection_verify_secrets(struct s2n_connection *conn, str
         bool expect_early_data_traffic_secret)
 {
     /* Test: All handshake and master traffic secrets calculated */
-    RESULT_ENSURE_EQ(conn->server, &conn->secure);
-    RESULT_ENSURE_EQ(conn->client, &conn->secure);
+    RESULT_ENSURE_EQ(conn->server, conn->secure);
+    RESULT_ENSURE_EQ(conn->client, conn->secure);
     RESULT_ENSURE_GT(secrets->blobs[S2N_CLIENT_HANDSHAKE_TRAFFIC_SECRET].size, 0);
     RESULT_ENSURE_GT(secrets->blobs[S2N_SERVER_HANDSHAKE_TRAFFIC_SECRET].size, 0);
     RESULT_ENSURE_GT(secrets->blobs[S2N_CLIENT_APPLICATION_TRAFFIC_SECRET].size, 0);
@@ -84,7 +84,7 @@ static S2N_RESULT s2n_mock_extract_method(struct s2n_connection *conn)
 static S2N_RESULT s2n_mock_derive_method(struct s2n_connection *conn, struct s2n_blob *secret)
 {
     uint8_t size = 0;
-    s2n_hmac_algorithm hmac_alg = conn->secure.cipher_suite->prf_alg;
+    s2n_hmac_algorithm hmac_alg = conn->secure->cipher_suite->prf_alg;
     RESULT_GUARD_POSIX(s2n_hmac_digest_size(hmac_alg, &size));
     RESULT_GUARD_POSIX(s2n_blob_init(secret, empty_secret, size));
     return S2N_RESULT_OK;
@@ -102,8 +102,8 @@ int main(int argc, char **argv)
     struct s2n_tls13_key_schedule_test_case test_cases[2000] = { 0 };
     size_t test_cases_count = 0;
     struct s2n_connection handshake_test_conn = {
-            .actual_protocol_version = S2N_TLS13,
-            .handshake = { .message_number = 1 },
+        .actual_protocol_version = S2N_TLS13,
+        .handshake = { .message_number = 1, .state_machine = S2N_STATE_MACHINE_TLS13 },
     };
     for (uint32_t handshake_type = 0; handshake_type < S2N_HANDSHAKES_COUNT; handshake_type++) {
         handshake_test_conn.handshake.handshake_type = handshake_type;
@@ -126,7 +126,7 @@ int main(int argc, char **argv)
                         /* Skip unavailable ciphers */
                         continue;
                     }
-                    test_cases[test_cases_count] = (struct s2n_tls13_key_schedule_test_case) {
+                    test_cases[test_cases_count] = (struct s2n_tls13_key_schedule_test_case){
                         .conn_mode = modes[mode_i],
                         .handshake_type = handshake_type,
                         .cipher_suite = ciphers->suites[cipher_i],
@@ -147,9 +147,9 @@ int main(int argc, char **argv)
 
             /* Minimal client connection that triggers an update */
             struct s2n_connection empty_client_conn = {
-                    .mode = S2N_CLIENT,
-                    .client_protocol_version = S2N_TLS13,
-                    .early_data_state = S2N_EARLY_DATA_REQUESTED
+                .mode = S2N_CLIENT,
+                .client_protocol_version = S2N_TLS13,
+                .early_data_state = S2N_EARLY_DATA_REQUESTED
             };
             EXPECT_ERROR_WITH_ERRNO(s2n_tls13_key_schedule_update(&empty_client_conn), S2N_ERR_NULL);
             empty_client_conn.client_protocol_version = S2N_TLS12;
@@ -157,14 +157,14 @@ int main(int argc, char **argv)
 
             /* Minimal server connection that triggers an update */
             struct s2n_connection empty_server_conn = {
-                    .mode = S2N_SERVER,
-                    .actual_protocol_version = S2N_TLS13,
-                    .handshake = { .message_number = 1 }
+                .mode = S2N_SERVER,
+                .actual_protocol_version = S2N_TLS13,
+                .handshake = { .message_number = 1 }
             };
             EXPECT_ERROR_WITH_ERRNO(s2n_tls13_key_schedule_update(&empty_server_conn), S2N_ERR_NULL);
             empty_server_conn.actual_protocol_version = S2N_TLS12;
             EXPECT_OK(s2n_tls13_key_schedule_update(&empty_server_conn));
-        }
+        };
 
         /* Test key schedule ordering */
         {
@@ -183,17 +183,19 @@ int main(int argc, char **argv)
 
             for (size_t i = 0; i < test_cases_count; i++) {
                 DEFER_CLEANUP(struct s2n_connection *conn = s2n_connection_new(test_cases[i].conn_mode),
-                    s2n_connection_ptr_free);
+                        s2n_connection_ptr_free);
                 conn->actual_protocol_version = S2N_TLS13;
+                EXPECT_OK(s2n_conn_choose_state_machine(conn, S2N_TLS13));
+
                 conn->handshake.handshake_type = test_cases[i].handshake_type;
-                conn->secure.cipher_suite = test_cases[i].cipher_suite;
+                conn->secure->cipher_suite = test_cases[i].cipher_suite;
                 if (test_cases[i].is_early_data_requested) {
                     conn->early_data_state = S2N_EARLY_DATA_REQUESTED;
                 }
 
                 struct s2n_test_secrets secrets = { 0 };
                 EXPECT_SUCCESS(s2n_connection_set_secret_callback(conn,
-                        s2n_test_secret_cb, (void*)&secrets));
+                        s2n_test_secret_cb, (void *) &secrets));
 
                 /* Perform the handshake */
                 while (s2n_conn_get_current_message_type(conn) != APPLICATION_DATA) {
@@ -211,19 +213,19 @@ int main(int argc, char **argv)
                      * We know what secrets every message should be encrypted with.
                      * Verify those secrets are available in time for each message.
                      */
-                    switch(s2n_conn_get_current_message_type(conn)) {
+                    switch (s2n_conn_get_current_message_type(conn)) {
                         case CLIENT_HELLO:
                             /* Expect not encrypted */
-                            EXPECT_EQUAL(conn->client, &conn->initial);
+                            EXPECT_EQUAL(conn->client, conn->initial);
                             break;
                         case HELLO_RETRY_MSG:
                         case SERVER_HELLO:
                             /* Expect not encrypted  */
-                            EXPECT_EQUAL(conn->server, &conn->initial);
+                            EXPECT_EQUAL(conn->server, conn->initial);
                             break;
                         case END_OF_EARLY_DATA:
                             /* Expect encrypted */
-                            EXPECT_EQUAL(conn->client, &conn->secure);
+                            EXPECT_EQUAL(conn->client, conn->secure);
                             /* Expect correct secret available */
                             EXPECT_TRUE(secrets.blobs[S2N_CLIENT_EARLY_TRAFFIC_SECRET].size > 0);
                             break;
@@ -233,7 +235,7 @@ int main(int argc, char **argv)
                         case SERVER_FINISHED:
                         case SERVER_CERT_REQ:
                             /* Expect encrypted */
-                            EXPECT_EQUAL(conn->server, &conn->secure);
+                            EXPECT_EQUAL(conn->server, conn->secure);
                             /* Expect correct secret available */
                             EXPECT_TRUE(secrets.blobs[S2N_SERVER_HANDSHAKE_TRAFFIC_SECRET].size > 0);
                             break;
@@ -241,14 +243,14 @@ int main(int argc, char **argv)
                         case CLIENT_CERT_VERIFY:
                         case CLIENT_FINISHED:
                             /* Expect encrypted */
-                            EXPECT_EQUAL(conn->client, &conn->secure);
+                            EXPECT_EQUAL(conn->client, conn->secure);
                             /* Expect correct secret available */
                             EXPECT_TRUE(secrets.blobs[S2N_CLIENT_HANDSHAKE_TRAFFIC_SECRET].size > 0);
                             break;
                         case APPLICATION_DATA:
                             /* Expect encrypted */
-                            EXPECT_EQUAL(conn->client, &conn->secure);
-                            EXPECT_EQUAL(conn->server, &conn->secure);
+                            EXPECT_EQUAL(conn->client, conn->secure);
+                            EXPECT_EQUAL(conn->server, conn->secure);
                             /* Expect correct secrets available */
                             EXPECT_TRUE(secrets.blobs[S2N_CLIENT_APPLICATION_TRAFFIC_SECRET].size > 0);
                             EXPECT_TRUE(secrets.blobs[S2N_SERVER_APPLICATION_TRAFFIC_SECRET].size > 0);
@@ -265,6 +267,7 @@ int main(int argc, char **argv)
                         case SERVER_NEW_SESSION_TICKET:
                         case SERVER_CERT_STATUS:
                         case SERVER_HELLO_DONE:
+                        case CLIENT_NPN:
                             FAIL_MSG("Unexpected TLS1.2 message");
                             break;
                     }
@@ -280,8 +283,8 @@ int main(int argc, char **argv)
             /* Restore derive and extract methods */
             EXPECT_MEMCPY_SUCCESS(derive_methods, saved_derive_methods, sizeof(saved_derive_methods));
             EXPECT_MEMCPY_SUCCESS(extract_methods, saved_extract_methods, sizeof(saved_extract_methods));
-        }
-    }
+        };
+    };
 
     END_TEST();
 }

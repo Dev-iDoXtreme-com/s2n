@@ -270,7 +270,6 @@ void cbmc_populate_s2n_hash_state(struct s2n_hash_state* state)
      * If required, this initialization should be done in the validation function.
      */
     cbmc_populate_s2n_evp_digest(&state->digest.high_level.evp);
-    cbmc_populate_s2n_evp_digest(&state->digest.high_level.evp_md5_secondary);
 }
 
 struct s2n_hash_state* cbmc_allocate_s2n_hash_state()
@@ -300,13 +299,9 @@ void cbmc_populate_s2n_hmac_evp_backup(struct s2n_hmac_evp_backup *backup)
 {
     CBMC_ENSURE_REF(backup);
     cbmc_populate_s2n_evp_digest(&backup->inner.evp);
-    cbmc_populate_s2n_evp_digest(&backup->inner.evp_md5_secondary);
     cbmc_populate_s2n_evp_digest(&backup->inner_just_key.evp);
-    cbmc_populate_s2n_evp_digest(&backup->inner_just_key.evp_md5_secondary);
     cbmc_populate_s2n_evp_digest(&backup->outer.evp);
-    cbmc_populate_s2n_evp_digest(&backup->outer.evp_md5_secondary);
     cbmc_populate_s2n_evp_digest(&backup->outer_just_key.evp);
-    cbmc_populate_s2n_evp_digest(&backup->outer_just_key.evp_md5_secondary);
 }
 
 struct s2n_hmac_evp_backup* cbmc_allocate_s2n_hmac_evp_backup()
@@ -518,6 +513,13 @@ void cbmc_populate_s2n_signature_scheme(struct s2n_signature_scheme *s2n_signatu
     s2n_signature_scheme->signature_curve = cbmc_allocate_s2n_ecc_named_curve();
 }
 
+struct s2n_signature_scheme *cbmc_allocate_s2n_signature_scheme()
+{
+    struct s2n_signature_scheme *s2n_signature_scheme = malloc(sizeof(*s2n_signature_scheme));
+    cbmc_populate_s2n_signature_scheme(s2n_signature_scheme);
+    return s2n_signature_scheme;
+}
+
 struct s2n_kex *cbmc_allocate_s2n_kex()
 {
     struct s2n_kex *s2n_kex = malloc(sizeof(*s2n_kex));
@@ -660,10 +662,10 @@ void cbmc_populate_s2n_handshake_parameters(struct s2n_handshake_parameters *s2n
     CBMC_ENSURE_REF(s2n_handshake_parameters);
     cbmc_populate_s2n_pkey(&(s2n_handshake_parameters->server_public_key));
     cbmc_populate_s2n_pkey(&(s2n_handshake_parameters->client_public_key));
-    cbmc_populate_s2n_signature_scheme(&(s2n_handshake_parameters->conn_sig_scheme));
     cbmc_populate_s2n_blob(&(s2n_handshake_parameters->client_cert_chain));
-    cbmc_populate_s2n_signature_scheme(&(s2n_handshake_parameters->client_cert_sig_scheme));
     cbmc_populate_s2n_cert_chain_and_key(s2n_handshake_parameters->our_chain_and_key);
+    s2n_handshake_parameters->server_cert_sig_scheme = cbmc_allocate_s2n_signature_scheme();
+    s2n_handshake_parameters->client_cert_sig_scheme = cbmc_allocate_s2n_signature_scheme();
     /* `s2n_handshake_parameters->exact_sni_matches`
      * `s2n_handshake_parameters->wc_sni_matches` are never allocated.
      * If required, these initializations should be done in the proof harness.
@@ -772,8 +774,8 @@ void cbmc_populate_s2n_connection(struct s2n_connection *s2n_connection)
     s2n_connection->recv                     = malloc(sizeof(*(s2n_connection->recv))); /* Function pointer. */
     s2n_connection->send_io_context          = malloc(sizeof(*(s2n_connection->secret_cb)));
     s2n_connection->recv_io_context          = malloc(sizeof(*(s2n_connection->secret_cb)));
-    cbmc_populate_s2n_crypto_parameters(&(s2n_connection->initial));
-    cbmc_populate_s2n_crypto_parameters(&(s2n_connection->secure));
+    cbmc_populate_s2n_crypto_parameters(s2n_connection->initial);
+    cbmc_populate_s2n_crypto_parameters(s2n_connection->secure);
     cbmc_populate_s2n_kex_parameters(&(s2n_connection->kex_params));
     s2n_connection->client = cbmc_allocate_s2n_crypto_parameters();
     s2n_connection->server = cbmc_allocate_s2n_crypto_parameters();
@@ -784,8 +786,6 @@ void cbmc_populate_s2n_connection(struct s2n_connection *s2n_connection)
     cbmc_populate_s2n_stuffer(&(s2n_connection->in));
     cbmc_populate_s2n_stuffer(&(s2n_connection->out));
     cbmc_populate_s2n_stuffer(&(s2n_connection->alert_in));
-    cbmc_populate_s2n_stuffer(&(s2n_connection->reader_alert_out));
-    cbmc_populate_s2n_stuffer(&(s2n_connection->writer_alert_out));
     cbmc_populate_s2n_handshake(&(s2n_connection->handshake));
     cbmc_populate_s2n_blob(&(s2n_connection->status_response));
     cbmc_populate_s2n_blob(&(s2n_connection->ct_response));

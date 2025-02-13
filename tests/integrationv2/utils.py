@@ -1,10 +1,16 @@
-from common import Protocols, Curves, Ciphers
-from providers import S2N, OpenSSL
-from global_flags import get_flag, S2N_FIPS_MODE, S2N_PROVIDER_VERSION
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+from common import Protocols
+from providers import S2N
+from global_flags import get_flag, S2N_FIPS_MODE
 
 
 def to_bytes(val):
     return bytes(str(val).encode('utf-8'))
+
+
+def to_string(val: bytes):
+    return val.decode(encoding="ascii", errors="backslashreplace")
 
 
 def get_expected_s2n_version(protocol, provider):
@@ -63,10 +69,13 @@ def invalid_test_parameters(*args, **kwargs):
     signature = kwargs.get('signature')
 
     providers = [provider_ for provider_ in [provider, other_provider] if provider_]
+    # Always consider S2N
+    providers.append(S2N)
 
-    # Only TLS1.3 supports RSA-PSS-PSS certificates
-    # (Earlier versions support RSA-PSS signatures, just via RSA-PSS-RSAE)
-    if protocol and protocol is not Protocols.TLS13:
+    certificates = [cert for cert in [certificate, client_certificate] if cert]
+
+    # Older versions do not support RSA-PSS-PSS certificates
+    if protocol and protocol < Protocols.TLS12:
         if client_certificate and client_certificate.algorithm == 'RSAPSS':
             return True
         if certificate and certificate.algorithm == 'RSAPSS':
@@ -75,6 +84,10 @@ def invalid_test_parameters(*args, **kwargs):
     for provider_ in providers:
         if not provider_.supports_protocol(protocol):
             return True
+
+        for certificate_ in certificates:
+            if not provider_.supports_certificate(certificate_):
+                return True
 
     if cipher is not None:
         # If the selected protocol doesn't allow the cipher, don't test
@@ -98,10 +111,6 @@ def invalid_test_parameters(*args, **kwargs):
     # If we are using a cipher that depends on a specific certificate algorithm
     # deselect the test if the wrong certificate is used.
     if certificate is not None:
-        if protocol is not None:
-            for provider_ in providers:
-                if provider_.supports_protocol(protocol, with_cert=certificate) is False:
-                    return True
         if cipher is not None and certificate.compatible_with_cipher(cipher) is False:
             return True
 

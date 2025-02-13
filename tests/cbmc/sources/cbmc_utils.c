@@ -16,6 +16,7 @@
 #include <assert.h>
 #include <crypto/s2n_hash.h>
 #include <utils/s2n_mem.h>
+#include <utils/s2n_ensure.h>
 #include <cbmc_proof/cbmc_utils.h>
 
 /**
@@ -80,7 +81,7 @@ void assert_bytes_match(const uint8_t *const a, const uint8_t *const b, const si
     assert(!a == !b);
     if (len > 0 && a != NULL && b != NULL) {
         size_t i;
-        __CPROVER_assume(i < len && len < MAX_MALLOC); /* prevent spurious pointer overflows */
+        CONTRACT_ASSUME(i < len && len < MAX_MALLOC); /* prevent spurious pointer overflows */
         assert(a[ i ] == b[ i ]);
     }
 }
@@ -89,7 +90,7 @@ void assert_all_bytes_are(const uint8_t *const a, const uint8_t c, const size_t 
 {
     if (len > 0 && a != NULL) {
         size_t i;
-        __CPROVER_assume(i < len);
+        CONTRACT_ASSUME(i < len);
         assert(a[ i ] == c);
     }
 }
@@ -110,7 +111,7 @@ void save_byte_from_array(const uint8_t *const array, const size_t size, struct 
 {
     if (size > 0 && array && storage) {
         storage->idx = nondet_size_t();
-        __CPROVER_assume(storage->idx < size);
+        CONTRACT_ASSUME(storage->idx < size);
         storage->byte = array[ storage->idx ];
     }
 }
@@ -137,11 +138,11 @@ int uninterpreted_compare(const void *const a, const void *const b)
     assert(b != NULL);
     int rval = __CPROVER_uninterpreted_compare(a, b);
     /* Compare is reflexive */
-    __CPROVER_assume(IMPLIES(a == b, rval == 0));
+    CONTRACT_ASSUME(IMPLIES(a == b, rval == 0));
     /* Compare is anti-symmetric*/
-    __CPROVER_assume(__CPROVER_uninterpreted_compare(b, a) == -rval);
+    CONTRACT_ASSUME(__CPROVER_uninterpreted_compare(b, a) == -rval);
     /* If two things are equal, their hashes are also equal */
-    if (rval == 0) { __CPROVER_assume(__CPROVER_uninterpreted_hasher(a) == __CPROVER_uninterpreted_hasher(b)); }
+    if (rval == 0) { CONTRACT_ASSUME(__CPROVER_uninterpreted_hasher(a) == __CPROVER_uninterpreted_hasher(b)); }
     return rval;
 }
 
@@ -160,11 +161,11 @@ bool uninterpreted_equals(const void *const a, const void *const b)
 {
     bool rval = __CPROVER_uninterpreted_equals(a, b);
     /* Equals is reflexive */
-    __CPROVER_assume(IMPLIES(a == b, rval));
+    CONTRACT_ASSUME(IMPLIES(a == b, rval));
     /* Equals is symmetric */
-    __CPROVER_assume(__CPROVER_uninterpreted_equals(b, a) == rval);
+    CONTRACT_ASSUME(__CPROVER_uninterpreted_equals(b, a) == rval);
     /* If two things are equal, their hashes are also equal */
-    if (rval) { __CPROVER_assume(__CPROVER_uninterpreted_hasher(a) == __CPROVER_uninterpreted_hasher(b)); }
+    if (rval) { CONTRACT_ASSUME(__CPROVER_uninterpreted_hasher(a) == __CPROVER_uninterpreted_hasher(b)); }
     return rval;
 }
 
@@ -219,13 +220,11 @@ void assert_rc_unchanged_on_evp_pkey_ctx(struct rc_keys_from_evp_pkey_ctx *stora
 void assert_rc_decrement_on_hash_state(struct rc_keys_from_hash_state *storage)
 {
     assert_rc_decrement_on_evp_pkey_ctx(&storage->evp);
-    assert_rc_decrement_on_evp_pkey_ctx(&storage->evp_md5);
 }
 
 void assert_rc_unchanged_on_hash_state(struct rc_keys_from_hash_state *storage)
 {
     assert_rc_unchanged_on_evp_pkey_ctx(&storage->evp);
-    assert_rc_unchanged_on_evp_pkey_ctx(&storage->evp_md5);
 }
 
 void save_abstract_evp_ctx(const EVP_PKEY_CTX *pctx, struct rc_keys_from_evp_pkey_ctx *storage)
@@ -244,20 +243,12 @@ void save_rc_keys_from_hash_state(const struct s2n_hash_state *state, struct rc_
 {
     storage->evp.pkey = NULL;
     storage->evp.pkey_eckey = NULL;
-    storage->evp_md5.pkey = NULL;
-    storage->evp_md5.pkey_eckey = NULL;
-    storage->evp.pkey_refs = storage->evp.pkey_eckey_refs = storage->evp_md5.pkey_refs = storage->evp_md5.pkey_eckey_refs = 0;
+    storage->evp.pkey_refs = storage->evp.pkey_eckey_refs = 0;
 
     if (state) {
         if (state->digest.high_level.evp.ctx) {
             if (state->digest.high_level.evp.ctx->pctx) {
                 save_abstract_evp_ctx(state->digest.high_level.evp.ctx->pctx, &storage->evp);
-            }
-        }
-
-        if (state->digest.high_level.evp_md5_secondary.ctx) {
-            if (state->digest.high_level.evp_md5_secondary.ctx->pctx) {
-                save_abstract_evp_ctx(state->digest.high_level.evp_md5_secondary.ctx->pctx, &storage->evp_md5);
             }
         }
     }
@@ -278,5 +269,4 @@ void free_rc_keys_from_evp_pkey_ctx(struct rc_keys_from_evp_pkey_ctx *pctx)
 void free_rc_keys_from_hash_state(struct rc_keys_from_hash_state *storage)
 {
     free_rc_keys_from_evp_pkey_ctx(&storage->evp);
-    free_rc_keys_from_evp_pkey_ctx(&storage->evp_md5);
 }

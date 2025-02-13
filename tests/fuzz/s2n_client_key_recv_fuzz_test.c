@@ -54,13 +54,8 @@ int num_suites;
 
 int s2n_fuzz_init(int *argc, char **argv[])
 {
-#ifdef S2N_TEST_IN_FIPS_MODE
-    test_suites = cipher_preferences_test_all_fips.suites;
-    num_suites = cipher_preferences_test_all_fips.count;
-#else
     test_suites = cipher_preferences_test_all.suites;
     num_suites = cipher_preferences_test_all.count;
-#endif
 
     /* One time Diffie-Hellman negotiation to speed along fuzz tests*/
     cert_chain_pem = malloc(S2N_MAX_TEST_PEM_SIZE);
@@ -107,10 +102,10 @@ int s2n_fuzz_test(const uint8_t *buf, size_t len)
     server_conn->server_protocol_version = TLS_VERSIONS[randval % s2n_array_len(TLS_VERSIONS)];
 
     POSIX_GUARD(s2n_stuffer_read_uint8(&server_conn->handshake.io, &randval));
-    server_conn->secure.cipher_suite = test_suites[randval % num_suites];
+    server_conn->secure->cipher_suite = test_suites[randval % num_suites];
 
     /* Skip incompatible TLS 1.3 cipher suites */
-    if (server_conn->secure.cipher_suite->key_exchange_alg == NULL) {
+    if (server_conn->secure->cipher_suite->key_exchange_alg == NULL) {
         POSIX_GUARD(s2n_connection_free(server_conn));
         return S2N_SUCCESS;
     }
@@ -121,12 +116,12 @@ int s2n_fuzz_test(const uint8_t *buf, size_t len)
     POSIX_GUARD(s2n_connection_get_ecc_preferences(server_conn, &ecc_preferences));
     POSIX_ENSURE_REF(ecc_preferences);
 
-    if (server_conn->secure.cipher_suite->key_exchange_alg->client_key_recv == s2n_ecdhe_client_key_recv || server_conn->secure.cipher_suite->key_exchange_alg->client_key_recv == s2n_hybrid_client_key_recv) {
+    if (server_conn->secure->cipher_suite->key_exchange_alg->client_key_recv == s2n_ecdhe_client_key_recv || server_conn->secure->cipher_suite->key_exchange_alg->client_key_recv == s2n_hybrid_client_key_recv) {
         server_conn->kex_params.server_ecc_evp_params.negotiated_curve = ecc_preferences->ecc_curves[0];
         s2n_ecc_evp_generate_ephemeral_key(&server_conn->kex_params.server_ecc_evp_params);
     }
 
-    if (server_conn->secure.cipher_suite->key_exchange_alg->client_key_recv == s2n_kem_client_key_recv || server_conn->secure.cipher_suite->key_exchange_alg->client_key_recv == s2n_hybrid_client_key_recv) {
+    if (server_conn->secure->cipher_suite->key_exchange_alg->client_key_recv == s2n_kem_client_key_recv || server_conn->secure->cipher_suite->key_exchange_alg->client_key_recv == s2n_hybrid_client_key_recv) {
         server_conn->kex_params.kem_params.kem = &s2n_kyber_512_r3;
     }
 

@@ -13,16 +13,15 @@
  * permissions and limitations under the License.
  */
 
+#include "crypto/s2n_rsa_signing.h"
 #include "s2n_test.h"
 #include "testlib/s2n_testlib.h"
-
-#include "crypto/s2n_rsa_signing.h"
 #include "tls/s2n_key_log.h"
 
-static int s2n_test_key_log_cb(void* context, struct s2n_connection *conn,
-                                   uint8_t *logline, size_t len)
+static int s2n_test_key_log_cb(void *context, struct s2n_connection *conn,
+        uint8_t *logline, size_t len)
 {
-    struct s2n_stuffer* stuffer = (struct s2n_stuffer*)context;
+    struct s2n_stuffer *stuffer = (struct s2n_stuffer *) context;
     POSIX_GUARD(s2n_stuffer_write_bytes(stuffer, logline, len));
     POSIX_GUARD(s2n_stuffer_write_uint8(stuffer, '\n'));
 
@@ -33,7 +32,7 @@ S2N_RESULT s2n_test_check_tls12(struct s2n_stuffer *stuffer)
 {
     size_t len = s2n_stuffer_data_available(stuffer);
     RESULT_ENSURE_GT(len, 0);
-    char *out = (char *)s2n_stuffer_raw_read(stuffer, len);
+    char *out = (char *) s2n_stuffer_raw_read(stuffer, len);
     RESULT_ENSURE_REF(out);
     /**
      * rather than writing a full parser, we'll just make sure it at least
@@ -47,7 +46,7 @@ S2N_RESULT s2n_test_check_tls13(struct s2n_stuffer *stuffer)
 {
     size_t len = s2n_stuffer_data_available(stuffer);
     RESULT_ENSURE_GT(len, 0);
-    char *out = (char *)s2n_stuffer_raw_read(stuffer, len);
+    char *out = (char *) s2n_stuffer_raw_read(stuffer, len);
     RESULT_ENSURE_REF(out);
     /**
      * rather than writing a full parser, we'll just make sure it at least
@@ -57,6 +56,7 @@ S2N_RESULT s2n_test_check_tls13(struct s2n_stuffer *stuffer)
     RESULT_ENSURE_REF(strstr(out, "SERVER_HANDSHAKE_TRAFFIC_SECRET "));
     RESULT_ENSURE_REF(strstr(out, "CLIENT_TRAFFIC_SECRET_0 "));
     RESULT_ENSURE_REF(strstr(out, "SERVER_TRAFFIC_SECRET_0 "));
+    RESULT_ENSURE_REF(strstr(out, "EXPORTER_SECRET "));
     return S2N_RESULT_OK;
 }
 
@@ -67,17 +67,17 @@ int main(int argc, char **argv)
     /* TLS 1.2 */
     {
         /* Setup connections */
-        struct s2n_connection *client_conn, *server_conn;
+        struct s2n_connection *client_conn = NULL, *server_conn = NULL;
         EXPECT_NOT_NULL(client_conn = s2n_connection_new(S2N_CLIENT));
         EXPECT_NOT_NULL(server_conn = s2n_connection_new(S2N_SERVER));
 
         /* Setup config */
-        struct s2n_cert_chain_and_key *chain_and_key;
+        struct s2n_cert_chain_and_key *chain_and_key = NULL;
         EXPECT_SUCCESS(s2n_test_cert_chain_and_key_new(&chain_and_key,
-            S2N_DEFAULT_TEST_CERT_CHAIN, S2N_DEFAULT_TEST_PRIVATE_KEY));
-        struct s2n_config *client_config;
+                S2N_DEFAULT_TEST_CERT_CHAIN, S2N_DEFAULT_TEST_PRIVATE_KEY));
+        struct s2n_config *client_config = NULL;
         EXPECT_NOT_NULL(client_config = s2n_config_new());
-        EXPECT_SUCCESS(s2n_config_set_cipher_preferences(client_config, "default"));
+        EXPECT_SUCCESS(s2n_config_set_cipher_preferences(client_config, "20240501"));
         EXPECT_SUCCESS(s2n_config_set_unsafe_for_testing(client_config));
         EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key_to_store(client_config, chain_and_key));
         DEFER_CLEANUP(struct s2n_stuffer client_key_log, s2n_stuffer_free);
@@ -85,9 +85,9 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_config_set_key_log_cb(client_config, s2n_test_key_log_cb, &client_key_log));
         EXPECT_SUCCESS(s2n_connection_set_config(client_conn, client_config));
 
-        struct s2n_config *server_config;
+        struct s2n_config *server_config = NULL;
         EXPECT_NOT_NULL(server_config = s2n_config_new());
-        EXPECT_SUCCESS(s2n_config_set_cipher_preferences(server_config, "default"));
+        EXPECT_SUCCESS(s2n_config_set_cipher_preferences(server_config, "20240501"));
         EXPECT_SUCCESS(s2n_config_set_unsafe_for_testing(server_config));
         EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key_to_store(server_config, chain_and_key));
         DEFER_CLEANUP(struct s2n_stuffer server_key_log, s2n_stuffer_free);
@@ -113,20 +113,20 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_cert_chain_and_key_free(chain_and_key));
         EXPECT_SUCCESS(s2n_config_free(server_config));
         EXPECT_SUCCESS(s2n_config_free(client_config));
-    }
+    };
 
     /* TLS 1.3 */
     if (s2n_is_tls13_fully_supported()) {
         /* Setup connections */
-        struct s2n_connection *client_conn, *server_conn;
+        struct s2n_connection *client_conn = NULL, *server_conn = NULL;
         EXPECT_NOT_NULL(client_conn = s2n_connection_new(S2N_CLIENT));
         EXPECT_NOT_NULL(server_conn = s2n_connection_new(S2N_SERVER));
 
         /* Setup config */
-        struct s2n_cert_chain_and_key *chain_and_key;
+        struct s2n_cert_chain_and_key *chain_and_key = NULL;
         EXPECT_SUCCESS(s2n_test_cert_chain_and_key_new(&chain_and_key,
-            S2N_DEFAULT_ECDSA_TEST_CERT_CHAIN, S2N_DEFAULT_ECDSA_TEST_PRIVATE_KEY));
-        struct s2n_config *client_config;
+                S2N_DEFAULT_ECDSA_TEST_CERT_CHAIN, S2N_DEFAULT_ECDSA_TEST_PRIVATE_KEY));
+        struct s2n_config *client_config = NULL;
         EXPECT_NOT_NULL(client_config = s2n_config_new());
         EXPECT_SUCCESS(s2n_config_set_cipher_preferences(client_config, "default_tls13"));
         EXPECT_SUCCESS(s2n_config_set_unsafe_for_testing(client_config));
@@ -136,7 +136,7 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_config_set_key_log_cb(client_config, s2n_test_key_log_cb, &client_key_log));
         EXPECT_SUCCESS(s2n_connection_set_config(client_conn, client_config));
 
-        struct s2n_config *server_config;
+        struct s2n_config *server_config = NULL;
         EXPECT_NOT_NULL(server_config = s2n_config_new());
         EXPECT_SUCCESS(s2n_config_set_cipher_preferences(server_config, "default_tls13"));
         EXPECT_SUCCESS(s2n_config_set_unsafe_for_testing(server_config));
@@ -171,22 +171,20 @@ int main(int argc, char **argv)
         uint8_t bytes[256] = { 0 };
 
         for (size_t idx = 0; idx < sizeof(bytes); idx++) {
-            bytes[idx] = (uint8_t)idx;
+            bytes[idx] = (uint8_t) idx;
         }
 
         DEFER_CLEANUP(struct s2n_stuffer encoded, s2n_stuffer_free);
         EXPECT_SUCCESS(s2n_stuffer_alloc(&encoded, sizeof(bytes) * 2));
-        EXPECT_OK(s2n_key_log_hex_encode(&encoded, bytes, sizeof(bytes)));
+        struct s2n_blob raw_bytes = { 0 };
+        EXPECT_SUCCESS(s2n_blob_init(&raw_bytes, bytes, sizeof(bytes)));
+        EXPECT_OK(s2n_stuffer_write_hex(&encoded, &raw_bytes));
 
-        DEFER_CLEANUP(struct s2n_stuffer decoded, s2n_stuffer_free);
-        EXPECT_SUCCESS(s2n_stuffer_alloc(&decoded, sizeof(bytes)));
-        EXPECT_SUCCESS(s2n_stuffer_read_hex(&encoded, &decoded, sizeof(bytes)));
-
-        uint8_t *out = s2n_stuffer_raw_read(&decoded, s2n_stuffer_data_available(&decoded));
-        EXPECT_NOT_NULL(out);
-
-        EXPECT_EQUAL(memcmp(bytes, out, sizeof(bytes)), 0);
-    }
+        DEFER_CLEANUP(struct s2n_blob decoded = { 0 }, s2n_free);
+        EXPECT_SUCCESS(s2n_alloc(&decoded, sizeof(bytes)));
+        EXPECT_OK(s2n_stuffer_read_hex(&encoded, &decoded));
+        EXPECT_BYTEARRAY_EQUAL(decoded.data, bytes, sizeof(bytes));
+    };
 
     END_TEST();
 }
