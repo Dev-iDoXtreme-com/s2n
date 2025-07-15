@@ -1,0 +1,325 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Post Quantum Support</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title"></h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <i class="fa fa-spinner fa-spin"></i>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="post-quantum-pq-support"><a class="header" href="#post-quantum-pq-support">Post Quantum (PQ) Support</a></h1>
+<p>s2n-tls supports both post-quantum key exchange and post-quantum authentication for TLS1.3.</p>
+<h2 id="key-exchange-ml-kem--kyber"><a class="header" href="#key-exchange-ml-kem--kyber">Key Exchange: ML-KEM / Kyber</a></h2>
+<p>Currently, only <a href="https://csrc.nist.gov/pubs/fips/203">ML-KEM</a> / <a href="https://pq-crystals.org/kyber/">Kyber</a> are supported for post-quantum key exchange. "ML-KEM" is the name given to the NIST standardized version of Kyber.</p>
+<p>Specifically, s2n-tls supports hybrid key exchange. PQ hybrid key exchange involves performing both classic ECDH key exchange and post-quantum key exchange, then combining the two resultant secrets. This strategy combines the high assurance of the classical key exchange algorithms with the quantum-resistance of the new post-quantum key exchange algorithms. If one of the two algorithms is compromised, either because advances in quantum computing make the classic algorithms insecure or because cryptographers find a flaw in the relatively new post-quantum algorithms, the secret is still secure. Hybrid post-quantum key exchange is more secure than standard key exchange, but is slower and requires more processing and more network bandwidth.</p>
+<p>Careful: An s2n-tls server that enables post-quantum cryptography will mandate post-quantum key exchange with any client advertising post-quantum algorithms. This can result in a retry and an extra round trip if the client does not initially send a post-quantum key share. The rational behind this behavior is that post-quantum users prioritize security over the potential cost of an extra round trip.</p>
+<h2 id="authentication-ml-dsa"><a class="header" href="#authentication-ml-dsa">Authentication: ML-DSA</a></h2>
+<p>Currently, only <a href="https://csrc.nist.gov/pubs/fips/204">ML-DSA</a> is supported for post-quantum authentication.</p>
+<p>In order to use ML-DSA, you must configure s2n-tls to use an ML-DSA certificate, just as you would configure an RSA or ECDSA certificate. See <a href="./ch09-certificates.html">certificates</a>.</p>
+<h2 id="requirements"><a class="header" href="#requirements">Requirements</a></h2>
+<h3 id="aws-lc"><a class="header" href="#aws-lc">AWS-LC</a></h3>
+<p>s2n-tls must be built with aws-lc to use post-quantum algorithms. See the <a href="https://github.com/aws/s2n-tls/blob/main/docs/BUILD.md#building-with-a-specific-libcrypto">s2n-tls build documentation</a> for how to build with aws-lc. For ML-DSA, you will need to use a version of AWS-LC &gt;= v1.50.0 (API version 33).</p>
+<p>If you're unsure what cryptography library s2n-tls is built against, trying running s2nd or s2nc:</p>
+<pre><code>&gt; s2nd localhost 8000
+libcrypto: AWS-LC
+Listening on localhost:8000
+</code></pre>
+<h3 id="security-policy"><a class="header" href="#security-policy">Security Policy</a></h3>
+<p>Post-quantum algorithms are enabled by configuring a security policy (see <a href="./ch06-security-policies.html">Security Policies</a>) that supports post-quantum algorithms.</p>
+<p>"default_pq" is the equivalent of "default_tls13", but with PQ support. Like the other default policies, "default_pq" may change as a result of library updates. The fixed, numbered equivalent of "default_pq" is currently "20250512". For previous defaults, see the "Default Policy History" section below.</p>
+<p>Other available PQ policies are compared in the tables below.</p>
+<h3 id="chart-security-policy-version-to-pq-hybrid-key-exchange-methods"><a class="header" href="#chart-security-policy-version-to-pq-hybrid-key-exchange-methods">Chart: Security Policy Version To PQ Hybrid Key Exchange Methods</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Version</th><th>secp256r1+kyber768</th><th>x25519+kyber768</th><th>secp384r1+kyber768</th><th>secp521r1+kyber1024</th><th>secp256r1+kyber512</th><th>x25519+kyber512</th></tr></thead><tbody>
+<tr><td>default_pq / 20250512</td><td>X</td><td>X</td><td>X</td><td>X</td><td>X</td><td>X</td></tr>
+<tr><td>20240730</td><td>X</td><td>X</td><td>X</td><td>X</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-12-15</td><td>X</td><td></td><td>X</td><td>X</td><td>X</td><td></td></tr>
+<tr><td>PQ-TLS-1-2-2023-12-14</td><td>X</td><td></td><td>X</td><td>X</td><td>X</td><td></td></tr>
+<tr><td>PQ-TLS-1-2-2023-12-13</td><td>X</td><td></td><td>X</td><td>X</td><td>X</td><td></td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-10</td><td>X</td><td>X</td><td>X</td><td>X</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-09</td><td>X</td><td>X</td><td>X</td><td>X</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-08</td><td>X</td><td>X</td><td>X</td><td>X</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-07</td><td>X</td><td>X</td><td>X</td><td>X</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-3-2023-06-01</td><td>X</td><td>X</td><td>X</td><td>X</td><td>X</td><td>X</td></tr>
+</tbody></table>
+</div>
+<h3 id="chart-security-policy-version-to-signature-schemes"><a class="header" href="#chart-security-policy-version-to-signature-schemes">Chart: Security Policy Version To Signature Schemes</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Version</th><th>ML-DSA</th><th>ECDSA</th><th>RSA</th><th>RSA-PSS</th><th>Legacy SHA1</th></tr></thead><tbody>
+<tr><td>default_pq / 20250512</td><td>X</td><td>X</td><td>X</td><td>X</td><td></td></tr>
+<tr><td>20240730</td><td></td><td>X</td><td>X</td><td>X</td><td></td></tr>
+<tr><td>PQ-TLS-1-2-2023-12-15</td><td></td><td>X</td><td>X</td><td>X</td><td></td></tr>
+<tr><td>PQ-TLS-1-2-2023-12-14</td><td></td><td>X</td><td>X</td><td>X</td><td></td></tr>
+<tr><td>PQ-TLS-1-2-2023-12-13</td><td></td><td>X</td><td>X</td><td>X</td><td></td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-10</td><td></td><td>X</td><td>X</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-09</td><td></td><td>X</td><td>X</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-08</td><td></td><td>X</td><td>X</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-07</td><td></td><td>X</td><td>X</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-3-2023-06-01</td><td></td><td>X</td><td>X</td><td>X</td><td>X</td></tr>
+</tbody></table>
+</div>
+<h3 id="chart-security-policy-version-to-classic-key-exchange"><a class="header" href="#chart-security-policy-version-to-classic-key-exchange">Chart: Security Policy Version To Classic Key Exchange</a></h3>
+<p>If the peer doesn't support a PQ hybrid key exchange method, s2n-tls will fall back to a classical option.</p>
+<div class="table-wrapper"><table><thead><tr><th>Version</th><th>secp256r1</th><th>x25519</th><th>secp384r1</th><th>secp521r1</th><th>DHE</th><th>RSA</th></tr></thead><tbody>
+<tr><td>default_pq / 20250512</td><td>X</td><td>X</td><td>X</td><td>X</td><td></td><td></td></tr>
+<tr><td>20240730</td><td>X</td><td>X</td><td>X</td><td>X</td><td></td><td></td></tr>
+<tr><td>PQ-TLS-1-2-2023-12-15</td><td>X</td><td></td><td>X</td><td>X</td><td>X</td><td></td></tr>
+<tr><td>PQ-TLS-1-2-2023-12-14</td><td>X</td><td></td><td>X</td><td>X</td><td></td><td></td></tr>
+<tr><td>PQ-TLS-1-2-2023-12-13</td><td>X</td><td></td><td>X</td><td>X</td><td></td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-10</td><td>X</td><td>X</td><td>X</td><td></td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-09</td><td>X</td><td>X</td><td>X</td><td></td><td>X</td><td></td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-08</td><td>X</td><td>X</td><td>X</td><td></td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-07</td><td>X</td><td>X</td><td>X</td><td></td><td></td><td>X</td></tr>
+<tr><td>PQ-TLS-1-3-2023-06-01</td><td>X</td><td></td><td>X</td><td>X</td><td>X</td><td>X</td></tr>
+</tbody></table>
+</div>
+<h3 id="chart-security-policy-version-to-ciphers"><a class="header" href="#chart-security-policy-version-to-ciphers">Chart: Security Policy Version To Ciphers</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Version</th><th>AES-CBC</th><th>AES-GCM</th><th>CHACHAPOLY</th><th>3DES</th></tr></thead><tbody>
+<tr><td>default_pq / 20250512</td><td>X</td><td>X</td><td>X</td><td></td></tr>
+<tr><td>20240730</td><td>X</td><td>X</td><td>X</td><td></td></tr>
+<tr><td>PQ-TLS-1-2-2023-12-15</td><td>X</td><td>X</td><td></td><td></td></tr>
+<tr><td>PQ-TLS-1-2-2023-12-14</td><td>X</td><td>X</td><td></td><td></td></tr>
+<tr><td>PQ-TLS-1-2-2023-12-13</td><td>X</td><td>X</td><td></td><td></td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-10</td><td>X</td><td>X</td><td>X*</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-09</td><td>X</td><td>X</td><td>X*</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-08</td><td>X</td><td>X</td><td>X*</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-07</td><td>X</td><td>X</td><td>X*</td><td></td></tr>
+<tr><td>PQ-TLS-1-3-2023-06-01</td><td>X</td><td>X</td><td>X*</td><td>X</td></tr>
+<tr><td>* only for TLS1.3</td><td></td><td></td><td></td><td></td></tr>
+</tbody></table>
+</div>
+<h3 id="chart-security-policy-version-to-tls-protocol-version"><a class="header" href="#chart-security-policy-version-to-tls-protocol-version">Chart: Security Policy Version To TLS Protocol Version</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Version</th><th>1.2</th><th>1.3</th></tr></thead><tbody>
+<tr><td>default_pq / 20250512</td><td>X</td><td>X</td></tr>
+<tr><td>20240730</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-12-15</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-12-14</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-12-13</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-10</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-09</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-08</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-2-2023-10-07</td><td>X</td><td>X</td></tr>
+<tr><td>PQ-TLS-1-3-2023-06-01</td><td>X</td><td>X</td></tr>
+</tbody></table>
+</div>
+<h4 id="default-policy-history"><a class="header" href="#default-policy-history">Default Policy History</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Version</th><th>"default_pq"</th></tr></thead><tbody>
+<tr><td>v1.5.19</td><td>20250512</td></tr>
+<tr><td>v1.5.0</td><td>20240730</td></tr>
+</tbody></table>
+</div>
+<h2 id="visibility"><a class="header" href="#visibility">Visibility</a></h2>
+<p>Call <code>s2n_connection_get_kem_group_name</code> to determine if a TLS handshake negotiated PQ key exchange.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="ch14-early-data.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="ch14-early-data.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>
